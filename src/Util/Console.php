@@ -2,108 +2,115 @@
 
 namespace AlibabaCloud\Dara\Util;
 
-use Monolog\Handler\AbstractProcessingHandler;
-use Monolog\Handler\StreamHandler;
-use Monolog\Logger;
-
 /**
  * This is a console module.
  */
 class Console
 {
+    private static $stderrStream = null;
+    private static $stdoutStream = null;
+
     /**
-     * @var Logger
+     * Set custom stderr stream for testing
      */
-    private static $loggerDriver;
+    public static function setStderrStream($stream)
+    {
+        self::$stderrStream = $stream;
+    }
+
+    /**
+     * Set custom stdout stream for testing
+     */
+    public static function setStdoutStream($stream)
+    {
+        self::$stdoutStream = $stream;
+    }
+
+    /**
+     * Reset streams to default
+     */
+    public static function resetStreams()
+    {
+        self::$stderrStream = null;
+        self::$stdoutStream = null;
+    }
 
     /**
      * Console val with log level into stdout.
      *
      * @param string $val the printing string
-     *
-     * @throws \Exception
-     *
-     * @example \[LOG\] tea console example
      */
     public static function log($val)
     {
-        self::logger()->log(200, $val);
+        self::output($val, 'LOG');
     }
 
     /**
      * Console val with info level into stdout.
      *
      * @param string $val the printing string
-     *
-     * @throws \Exception
-     *
-     * @example \[INFO\] tea console example
      */
     public static function info($val)
     {
-        self::logger()->info($val);
+        self::output($val, 'INFO');
     }
 
     /**
      * Console val with warning level into stdout.
      *
      * @param string $val the printing string
-     *
-     * @throws \Exception
-     *
-     * @example \[WARNING\] tea console example
      */
     public static function warning($val)
     {
-        self::logger()->warning($val);
+        self::output($val, 'WARNING');
     }
 
     /**
      * Console val with debug level into stdout.
      *
      * @param string $val the printing string
-     *
-     * @throws \Exception
-     *
-     * @example \[DEBUG\] tea console example
      */
     public static function debug($val)
     {
-        self::logger()->debug($val);
+        self::output($val, 'DEBUG');
     }
 
     /**
      * Console val with error level into stderr.
      *
      * @param string $val the printing string
-     *
-     * @throws \Exception
-     *
-     * @example \[ERROR\] tea console example
      */
     public static function error($val)
     {
-        self::logger()->error($val);
+        self::output($val, 'ERROR', true);
     }
 
     /**
-     * @param AbstractProcessingHandler $handler
+     * Outputs the message to the appropriate output stream.
+     *
+     * @param string $val    The message to log
+     * @param string $level  The log level label
+     * @param bool   $stderr Whether to output to stderr
      */
-    public static function pushHandler($handler)
+    private static function output($val, $level, $stderr = false)
     {
-        self::$loggerDriver->pushHandler($handler);
-    }
-
-    /**
-     * @return Logger
-     */
-    public static function logger()
-    {
-        if (null === self::$loggerDriver) {
-            self::$loggerDriver = new Logger('tea-console-log');
-            self::$loggerDriver->pushHandler(new StreamHandler('php://stderr', 0));
+        $prefix = sprintf("[%s] ", $level);
+        $message = $prefix . $val . PHP_EOL;
+        
+        if ($stderr) {
+            // 使用自定义 stderr 流或默认的 stderr
+            if (self::$stderrStream !== null) {
+                fwrite(self::$stderrStream, $message);
+            } else {
+                file_put_contents('php://stderr', $message);
+            }
+        } else {
+            // 使用自定义 stdout 流或默认的 echo
+            if (self::$stdoutStream !== null) {
+                fwrite(self::$stdoutStream, $message);
+            } else {
+                echo $message;
+            }
         }
-
-        return self::$loggerDriver;
     }
 }
