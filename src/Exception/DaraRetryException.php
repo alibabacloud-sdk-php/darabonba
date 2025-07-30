@@ -5,7 +5,7 @@ namespace AlibabaCloud\Dara\Exception;
 /**
  * Class DaraRetryException
  */
-class DaraRespException extends DaraException
+class DaraRetryException extends DaraException
 {
     /**
      * DaraRetryException constructor.
