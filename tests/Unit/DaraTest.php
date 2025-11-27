@@ -121,20 +121,21 @@ class DaraTest extends TestCase
         while ($count > 0) {
             $request                  = new Request();
             $request->method          = 'GET';
-            $request->protocol        = 'http';
-            $request->headers['host'] = 'example.com';
-            $request->port            = 80;
-            Dara::send($request);
+            $request->protocol        = 'https';
+            $request->headers['host'] = 'alibabacloud.com';
+            $request->pathname        = '/posts/1';
+            $request->port            = 443;
+            $response = Dara::send($request);
+            self::assertEquals(200, $response->getStatusCode());
             --$count;
         }
-        // No Exception is OK
-        self::assertTrue(true);
     }
 
     public static function testProxy()
     {
-        $request = new Request('GET', 'https://next.api.aliyun.com/home');
-        Dara::send($request); // not throw exception
+        $request = new Request('GET', 'https://api.alibabacloud.com/');
+        $response = Dara::send($request);
+        self::assertEquals(200, $response->getStatusCode());
 
         try {
             Dara::send($request, [
@@ -148,7 +149,7 @@ class DaraTest extends TestCase
         }
 
         try {
-            $request           = new Request('GET', 'http://next.api.aliyun.com/home');
+            $request           = new Request('GET', 'http://api.alibabacloud.com/');
             $request->protocol = 'http';
             Dara::send($request, [
                 'httpProxy'   => 'http://127.0.0.1:1234',
@@ -162,16 +163,31 @@ class DaraTest extends TestCase
     }
     public static function testIgnoreSSL()
     {
-        $request = new Request('GET', 'https://next.api.aliyun.com/home');
-        //When ignoreSSL is '', null, 0, false, GuzzleHttp verify is true, otherwise GuzzleHttp verify is false.
-        Dara::send($request,['ignoreSSL' => true]);
-        Dara::send($request,['ignoreSSL' => '']);
-        Dara::send($request,['ignoreSSL' => 'true']);
-        Dara::send($request,['ignoreSSL' => null]);
-        Dara::send($request,['ignoreSSL' => 1]);
-        Dara::send($request,['ignoreSSL' => 0]);
-        Dara::send($request,['ignoreSSL' => [true]]);
-        Dara::send($request,['ignoreSSL' => [false]]);
+        $request = new Request('GET', 'https://api.alibabacloud.com/');
+        // When ignoreSSL is '', null, 0, false, GuzzleHttp verify is true, otherwise GuzzleHttp verify is false.
+        $response = Dara::send($request, ['ignoreSSL' => true]);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => '']);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => 'true']);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => null]);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => 1]);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => 0]);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => [true]]);
+        self::assertEquals(200, $response->getStatusCode());
+        
+        $response = Dara::send($request, ['ignoreSSL' => [false]]);
+        self::assertEquals(200, $response->getStatusCode());
     }
 
     public static function testDaraException()

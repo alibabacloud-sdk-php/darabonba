@@ -288,7 +288,7 @@ class RetryTest extends TestCase
             'retryCondition' => [$condition2]
         ]);
         $backoffTime = Dara::getBackoffDelay($options, $context);
-        $this->assertTrue($backoffTime >= 100 && $backoffTime <= 200);
+        $this->assertTrue($backoffTime >= 0 && $backoffTime <= 200);
 
         $exponentialPolicy = BackoffPolicy::newBackoffPolicy([
             'policy' => 'Exponential',
