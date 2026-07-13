@@ -1,17 +1,17 @@
 
 ![](https://aliyunsdk-pages.alicdn.com/icons/AlibabaCloud.svg)
 
-## Alibaba Cloud Tea for Java
+## Alibaba Cloud Darabonba for PHP
 
-[![CI](https://github.com/aliyun/tea-php/actions/workflows/ci.yml/badge.svg)](https://github.com/aliyun/tea-php/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/aliyun/tea-php/branch/master/graph/badge.svg)](https://codecov.io/gh/aliyun/tea-php)
-[![Latest Stable Version](https://poser.pugx.org/alibabacloud/tea/v/stable)](https://packagist.org/packages/alibabacloud/tea)
-[![License](https://poser.pugx.org/alibabacloud/tea/license)](https://packagist.org/packages/alibabacloud/tea)
+[![CI](https://github.com/alibabacloud-sdk-php/darabonba/actions/workflows/ci.yml/badge.svg)](https://github.com/alibabacloud-sdk-php/darabonba/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/alibabacloud-sdk-php/darabonba/branch/master/graph/badge.svg)](https://codecov.io/gh/alibabacloud-sdk-php/darabonba)
+[![Latest Stable Version](https://poser.pugx.org/alibabacloud/darabonba/v/stable)](https://packagist.org/packages/alibabacloud/darabonba)
+[![License](https://poser.pugx.org/alibabacloud/tea/license)](https://packagist.org/packages/alibabacloud/darabonba)
 
 ## Installation
 
 ```sh
-composer require alibabacloud/tea --optimize-autoloader
+composer require alibabacloud/darabonba --optimize-autoloader
 ```
 
 > Some users may not be able to install due to network problems, you can try to switch the Composer mirror.

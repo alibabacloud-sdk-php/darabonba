@@ -16,25 +16,30 @@ class StreamTest extends TestCase
 
     public function getStream()
     {
-        return new Stream(fopen('https://alibabacloud.com/', 'r'));
+        // Use an in-memory JSON payload instead of httpbin.org (external flaky dependency).
+        $payload = '{"url":"http://httpbin.org/get","args":{}}';
+        $resource = fopen('php://memory', 'r+');
+        fwrite($resource, $payload);
+        rewind($resource);
+
+        return new Stream($resource);
     }
 
     public function testReadAsBytes()
     {
         $bytes = StreamUtil::readAsBytes($this->getStream());
-        $this->assertNotEmpty($bytes);
+        $this->assertEquals(123, $bytes[0]);
     }
 
     public function testReadAsString()
     {
         $string = StreamUtil::readAsString($this->getStream());
-        $this->assertNotEmpty($string);
+        $this->assertEquals($string[0], '{');
     }
 
     public function testReadAsJSON()
     {
         $result = StreamUtil::readAsJSON($this->getStream());
-        // JSON parsing may return null for HTML content, which is expected
-        $this->assertTrue(is_array($result) || is_null($result));
+        $this->assertEquals('http://httpbin.org/get', $result['url']);
     }
 }
