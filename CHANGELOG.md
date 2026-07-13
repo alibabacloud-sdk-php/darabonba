@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## [Unreleased]
+
+### Added
+- WebSocket protocol support (align golang tea): client, handler, connector, session util, RuntimeOptions fields
+- Unit tests for WebSocket with local mock server
+
+### Fixed
+- StreamTest no longer depends on flaky external httpbin/network
+- Feature RequestTest skips on external network failures
+
+
 ## [1.0.4] - 2025-12-15
 
 ### Changed
