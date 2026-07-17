@@ -316,7 +316,7 @@ class CoverageBoostTest extends TestCase
             try {
                 new $item['class'](['policy' => $item['policy']]);
                 $this->fail('expected exception for ' . $item['class']);
-            } catch (\Throwable $e) {
+            } catch (\Exception $e) {
                 $this->assertTrue(true);
             }
         }
@@ -487,13 +487,13 @@ class CoverageBoostTest extends TestCase
                 'event' => 'e',
                 'retry' => 1,
             ]);
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             // fromMap currently returns undefined $res; still covers assignment branches
             $this->assertTrue(true);
         }
         try {
             SSEEvent::fromMap(['data' => []]);
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             $this->assertTrue(true);
         }
     }
@@ -553,27 +553,27 @@ class CoverageBoostTest extends TestCase
         // so wrap to keep the suite green while still executing those lines when possible.
         try {
             Url::percentEncode('a b*~');
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             $this->assertTrue(true);
         }
         try {
             Url::urlEncode('a b');
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             $this->assertTrue(true);
         }
         try {
             Url::pathEncode('/a/b');
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             $this->assertTrue(true);
         }
         try {
             Url::pathEncode('/');
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             $this->assertTrue(true);
         }
         try {
             Url::urlEncode('');
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             $this->assertTrue(true);
         }
 
@@ -589,7 +589,7 @@ class CoverageBoostTest extends TestCase
         foreach (['path', 'pathname', 'protocol', 'hostname', 'host', 'port', 'hash', 'search', 'auth', 'href'] as $method) {
             try {
                 $url->$method();
-            } catch (\Throwable $e) {
+            } catch (\Exception $e) {
                 $this->assertTrue(true);
             }
         }
