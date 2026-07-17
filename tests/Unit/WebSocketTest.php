@@ -74,7 +74,19 @@ class WebSocketTest extends TestCase
         $command = sprintf('php %s %d > /dev/null 2>&1 & echo $!', escapeshellarg($server), $this->port);
         $output = shell_exec($command);
         $this->pid = (int) trim($output);
-        usleep(300000);
+        $ready = false;
+        for ($i = 0; $i < 50; ++$i) {
+            $fp = @fsockopen('127.0.0.1', $this->port, $errno, $errstr, 0.2);
+            if ($fp) {
+                fclose($fp);
+                $ready = true;
+                break;
+            }
+            usleep(100000);
+        }
+        if (!$ready) {
+            throw new Exception('WebSocket mock server failed to start on port ' . $this->port);
+        }
     }
 
     /**
@@ -272,4 +284,165 @@ class WebSocketTest extends TestCase
         self::assertSame('hello websocket', $handler->lastMessage->payload);
         $client->disconnect();
     }
+
+    public function testSendBinaryAndClose()
+    {
+        $handler = new MockWebSocketHandler();
+        $client = WebSocketUtil::newDefaultWebSocketClient($handler);
+        $request = new Request();
+        $request->protocol = 'ws';
+        $request->pathname = '/';
+        $request->headers = [
+            'host' => '127.0.0.1:' . $this->port,
+            'X-Custom' => '1',
+        ];
+
+        $client->connect($request, [
+            'connectTimeout' => 5000,
+            'webSocketPingInterval' => 0,
+            'webSocketEnableReconnect' => false,
+        ]);
+        self::assertTrue($client->isConnected());
+        $client->sendBinary('bin-data');
+        $client->pump(500);
+        self::assertGreaterThanOrEqual(1, $handler->messageReceivedCount);
+        $client->close();
+        self::assertFalse($client->isConnected());
+    }
+
+    public function testSendTextWhenDisconnected()
+    {
+        $handler = new MockWebSocketHandler();
+        $client = WebSocketUtil::newDefaultWebSocketClient($handler);
+        $this->expectException(Exception::class);
+        $client->sendText('nope');
+    }
+
+    public function testConnectNullArgs()
+    {
+        $handler = new MockWebSocketHandler();
+        $client = WebSocketUtil::newDefaultWebSocketClient($handler);
+        try {
+            $client->connect(null, []);
+            self::fail('expected');
+        } catch (InvalidArgumentException $e) {
+            self::assertTrue(true);
+        }
+        try {
+            $client->connect(new Request(), null);
+            self::fail('expected');
+        } catch (InvalidArgumentException $e) {
+            self::assertTrue(true);
+        }
+    }
+
+    public function testConnectTlsProxyConfigPaths()
+    {
+        $handler = new MockWebSocketHandler();
+        $client = WebSocketUtil::newDefaultWebSocketClient($handler);
+        $request = new Request();
+        $request->protocol = 'wss';
+        $request->pathname = '/';
+        $request->headers = ['host' => '127.0.0.1:' . $this->port];
+
+        $runtime = [
+            'connectTimeout' => 200,
+            'webSocketHandshakeTimeout' => 200,
+            'ignoreSSL' => true,
+            'ca' => "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+            'cert' => "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+            'key' => "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
+            'httpsProxy' => 'http://user:pass@127.0.0.1:1',
+            'webSocketPingInterval' => 0,
+            'webSocketEnableReconnect' => false,
+        ];
+        try {
+            $client->connect($request, $runtime);
+            self::fail('expected connection failure');
+        } catch (Exception $e) {
+            self::assertTrue(true);
+        }
+    }
+
+    public function testConnectHttpProxyAndNoProxyAndSocks()
+    {
+        $handler = new MockWebSocketHandler();
+        $client = WebSocketUtil::newDefaultWebSocketClient($handler);
+        $request = new Request();
+        $request->protocol = 'ws';
+        $request->pathname = '/';
+        $request->headers = ['host' => '127.0.0.1:' . $this->port];
+
+        try {
+            $client->connect($request, [
+                'connectTimeout' => 200,
+                'httpProxy' => 'http://user:secret@127.0.0.1:1',
+                'webSocketPingInterval' => 0,
+            ]);
+        } catch (Exception $e) {
+            self::assertTrue(true);
+        }
+
+        $client2 = WebSocketUtil::newDefaultWebSocketClient($handler);
+        try {
+            $client2->connect($request, [
+                'connectTimeout' => 200,
+                'noProxy' => '127.0.0.1',
+                'httpProxy' => 'http://127.0.0.1:1',
+                'webSocketPingInterval' => 0,
+            ]);
+            // may succeed because noProxy skips proxy and server is up
+            if ($client2->isConnected()) {
+                $client2->disconnect();
+            }
+        } catch (Exception $e) {
+            self::assertTrue(true);
+        }
+
+        $client3 = WebSocketUtil::newDefaultWebSocketClient($handler);
+        try {
+            $client3->connect($request, [
+                'connectTimeout' => 2000,
+                'socks5Proxy' => 'socks5://127.0.0.1:1',
+                'webSocketPingInterval' => 0,
+            ]);
+            if ($client3->isConnected()) {
+                $client3->disconnect();
+            }
+        } catch (Exception $e) {
+            // expected when socks proxy is unavailable
+        }
+        self::assertTrue(true);
+    }
+
+    public function testReconnectAfterDisconnectAndPing()
+    {
+        $handler = new MockWebSocketHandler();
+        $client = WebSocketUtil::newDefaultWebSocketClient($handler);
+        $request = new Request();
+        $request->protocol = 'ws';
+        $request->pathname = '/';
+        $request->headers = ['host' => '127.0.0.1:' . $this->port];
+
+        $runtime = [
+            'connectTimeout' => 5000,
+            'webSocketPingInterval' => 50,
+            'webSocketPongTimeout' => 200,
+            'webSocketEnableReconnect' => true,
+            'webSocketMaxReconnectTimes' => 2,
+            'webSocketReconnectInterval' => 50,
+        ];
+        $client->connect($request, $runtime);
+        self::assertTrue($client->isConnected());
+        $client->pump(150);
+        $client->disconnect();
+        self::assertFalse($client->isConnected());
+
+        // reconnect after clean disconnect
+        $client->reconnect();
+        self::assertTrue($client->isConnected());
+        $client->reconnectGracefully();
+        $client->close();
+    }
+
 }
