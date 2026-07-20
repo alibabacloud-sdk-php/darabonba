@@ -13,7 +13,7 @@ class EqualJitterBackoffPolicy extends BackoffPolicy {
     public function __construct(array $option) {
         parent::__construct($option);
         if (!isset($option['period'])) {
-            throw new InvalidArgumentException("Period must be specified.");
+            throw new DaraException("Period must be specified.");
         }
         $this->period = $option['period'];
         // Default: 3 days
