@@ -1,6 +1,6 @@
 <?php
 
-namespace AlibabaCloud\Dara\Tests;
+namespace AlibabaCloud\Dara\Tests\Unit;
 
 use AlibabaCloud\Dara\AbstractWebSocketHandler;
 use AlibabaCloud\Dara\Dara;
