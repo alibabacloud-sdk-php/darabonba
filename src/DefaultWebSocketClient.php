@@ -271,6 +271,12 @@ class DefaultWebSocketClient implements WebSocketClientInterface
             $options['tls'] = $tlsOptions;
         }
 
+        if (Dara::isIpv4Only($runtimeObject)) {
+            // without happy eyeballs only A records are resolved; the IPv4 bind rejects IPv6 literals
+            $options['happy_eyeballs'] = false;
+            $options['tcp']['bindto'] = '0.0.0.0:0';
+        }
+
         $this->configureProxy($options, $parsed, $runtimeObject, $request);
 
         return new SocketConnector($loop, $options);

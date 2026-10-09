@@ -29,6 +29,19 @@ class Dara
      */
     private static $config = [];
 
+    /**
+     * @var HandlerStack|null
+     */
+    private static $defaultHandler;
+
+    /**
+     * Separate handler (and therefore curl connection pool) for ipv4Only requests,
+     * so IPv4-only and dual-stack requests never share connections.
+     *
+     * @var HandlerStack|null
+     */
+    private static $ipv4OnlyHandler;
+
     const MAX_DELAY_TIME = 120 * 1000;
     const MIN_DELAY_TIME = 100;
 
@@ -48,8 +61,9 @@ class Dara
             $request = $request->getPsrRequest();
         }
 
+        $client = self::clientFor($config);
         $config = self::resolveConfig($config);
-        $res = self::client()->send(
+        $res = $client->send(
             $request,
             $config
         );
@@ -66,9 +80,10 @@ class Dara
             $request = $request->getPsrRequest();
         }
 
+        $client = self::clientFor($config);
         $config = self::resolveConfig($config);
 
-        return self::client()->sendAsync(
+        return $client->sendAsync(
             $request,
             $config
         );
@@ -82,10 +97,8 @@ class Dara
         if (isset(self::$config['handler'])) {
             $stack = self::$config['handler'];
         } else {
-            $stack = HandlerStack::create();
-            $stack->push(Middleware::mapResponse(static function (ResponseInterface $response) {
-                return new Response($response);
-            }));
+            $stack = self::createHandler();
+            self::$defaultHandler = $stack;
         }
 
         self::$config['handler'] = $stack;
@@ -98,6 +111,54 @@ class Dara
 
         $new_config = Helper::merge([self::$config, $config]);
         return new Client($new_config);
+    }
+
+    /**
+     * @param array $runtime runtime options (RuntimeOptions map)
+     *
+     * @return bool
+     */
+    public static function isIpv4Only(array $runtime)
+    {
+        if (!isset($runtime['ipv4Only'])) {
+            return false;
+        }
+        $ipv4Only = $runtime['ipv4Only'];
+        if (\is_string($ipv4Only)) {
+            return filter_var($ipv4Only, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return (bool) $ipv4Only;
+    }
+
+    /**
+     * @return HandlerStack
+     */
+    private static function createHandler()
+    {
+        $stack = HandlerStack::create();
+        $stack->push(Middleware::mapResponse(static function (ResponseInterface $response) {
+            return new Response($response);
+        }));
+
+        return $stack;
+    }
+
+    /**
+     * @return Client
+     */
+    private static function clientFor(array $runtime)
+    {
+        $client = self::client();
+        // a user-supplied handler (Dara::config(['handler' => ...])) is used as-is
+        if (!self::isIpv4Only($runtime) || self::$config['handler'] !== self::$defaultHandler) {
+            return $client;
+        }
+        if (null === self::$ipv4OnlyHandler) {
+            self::$ipv4OnlyHandler = self::createHandler();
+        }
+
+        return self::client(['handler' => self::$ipv4OnlyHandler]);
     }
 
     /**
@@ -377,6 +438,10 @@ class Dara
         }
         if (isset($config['stream']) && !empty($config['stream'])) {
             $options->set(RequestOptions::STREAM, (bool)$config['stream']);
+        }
+        if (self::isIpv4Only($config)) {
+            // curl handler maps this to CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
+            $options->set(RequestOptions::FORCE_IP_RESOLVE, 'v4');
         }
         // readTimeout&connectTimeout unit is millisecond
         $read_timeout = isset($config['readTimeout']) && !empty($config['readTimeout']) ? (int) $config['readTimeout'] : 3000;
