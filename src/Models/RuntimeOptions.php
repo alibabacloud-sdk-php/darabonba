@@ -28,7 +28,6 @@ class RuntimeOptions extends Model {
         'socks5Proxy' => 'socks5Proxy',
         'socks5NetWork' => 'socks5NetWork',
         'keepAlive' => 'keepAlive',
-        'ipv4Only' => 'ipv4Only',
         'webSocketPingInterval' => 'webSocketPingInterval',
         'webSocketPongTimeout' => 'webSocketPongTimeout',
         'webSocketEnableReconnect' => 'webSocketEnableReconnect',
@@ -93,9 +92,6 @@ class RuntimeOptions extends Model {
         }
         if (null !== $this->keepAlive) {
             $res['keepAlive'] = $this->keepAlive;
-        }
-        if (null !== $this->ipv4Only) {
-            $res['ipv4Only'] = $this->ipv4Only;
         }
         if (null !== $this->extendsParameters) {
             $res['extendsParameters'] = null !== $this->extendsParameters ? $this->extendsParameters->toMap() : null;
@@ -182,9 +178,6 @@ class RuntimeOptions extends Model {
         }
         if(isset($map['keepAlive'])){
             $model->keepAlive = $map['keepAlive'];
-        }
-        if(isset($map['ipv4Only'])){
-            $model->ipv4Only = $map['ipv4Only'];
         }
         if(isset($map['extendsParameters'])){
             $model->extendsParameters = ExtendsParameters::fromMap($map['extendsParameters']);
@@ -319,12 +312,6 @@ class RuntimeOptions extends Model {
      * @var bool
      */
     public $keepAlive;
-
-    /**
-     * @description whether to resolve and connect over IPv4 only (A records only)
-     * @var bool
-     */
-    public $ipv4Only;
 
     /**
      * @description Extends Parameters

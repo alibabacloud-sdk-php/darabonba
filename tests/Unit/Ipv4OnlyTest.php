@@ -4,7 +4,6 @@ namespace AlibabaCloud\Dara\Tests\Unit;
 
 use AlibabaCloud\Dara\AbstractWebSocketHandler;
 use AlibabaCloud\Dara\Dara;
-use AlibabaCloud\Dara\Models\RuntimeOptions;
 use AlibabaCloud\Dara\Request;
 use AlibabaCloud\Dara\WebSocketUtil;
 use Exception;
@@ -37,25 +36,6 @@ class Ipv4OnlyTest extends TestCase
         Dara::config([]);
     }
 
-    public function testRuntimeOptionsIpv4OnlyRoundTrip()
-    {
-        $default = new RuntimeOptions();
-        self::assertNull($default->ipv4Only);
-        self::assertArrayNotHasKey('ipv4Only', $default->toMap());
-        self::assertNull(RuntimeOptions::fromMap([])->ipv4Only);
-
-        $opts = RuntimeOptions::fromMap(['ipv4Only' => true, 'keepAlive' => true]);
-        $opts->validate();
-        self::assertTrue($opts->ipv4Only);
-        self::assertSame(['keepAlive' => true, 'ipv4Only' => true], $opts->toMap());
-        self::assertTrue(RuntimeOptions::fromMap($opts->toMap())->ipv4Only);
-
-        $disabled = new RuntimeOptions(['ipv4Only' => false]);
-        self::assertFalse($disabled->ipv4Only);
-        self::assertSame(['ipv4Only' => false], $disabled->toMap());
-        self::assertFalse(RuntimeOptions::fromMap($disabled->toMap())->ipv4Only);
-    }
-
     public function testIsIpv4Only()
     {
         self::assertFalse(Dara::isIpv4Only([]));
@@ -67,7 +47,6 @@ class Ipv4OnlyTest extends TestCase
         self::assertTrue(Dara::isIpv4Only(['ipv4Only' => true]));
         self::assertTrue(Dara::isIpv4Only(['ipv4Only' => 1]));
         self::assertTrue(Dara::isIpv4Only(['ipv4Only' => 'true']));
-        self::assertTrue(Dara::isIpv4Only(RuntimeOptions::fromMap(['ipv4Only' => true])->toMap()));
     }
 
     public function testResolveConfig()
