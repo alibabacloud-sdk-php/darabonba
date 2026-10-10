@@ -4,6 +4,7 @@ namespace AlibabaCloud\Dara\Tests\Unit;
 
 use AlibabaCloud\Dara\AbstractWebSocketHandler;
 use AlibabaCloud\Dara\Dara;
+use AlibabaCloud\Dara\HttpConnectProxyConnector;
 use AlibabaCloud\Dara\Request;
 use AlibabaCloud\Dara\WebSocketUtil;
 use Exception;
@@ -189,6 +190,229 @@ class Ipv4OnlyTest extends TestCase
         $client->connect($this->wsRequest('localhost', $port), $this->wsRuntime(['ipv4Only' => true]));
         self::assertTrue($client->isConnected());
         $client->disconnect();
+    }
+
+    public function testStreamIpv4OnlyResolvesHostWithPort()
+    {
+        $port = $this->startHttpServer('127.0.0.1');
+        $runtime = ['ipv4Only' => true, 'stream' => true, 'connectTimeout' => 2000];
+
+        $request = $this->hostHeaderRequest('localhost:' . $port);
+        $request->pathname = '/sse';
+        $res = Dara::send($request, $runtime);
+        self::assertSame(200, $res->getStatusCode());
+        self::assertSame("data: ok\n\n", (string) $res->getBody());
+
+        $res = Dara::sendAsync($request, $runtime)->wait();
+        self::assertSame(200, $res->getStatusCode());
+    }
+
+    public function testStreamIpv4OnlyFailsAgainstIpv6OnlyServer()
+    {
+        $port = $this->startHttpServer('[::1]');
+        $runtime = ['ipv4Only' => true, 'stream' => true, 'connectTimeout' => 2000];
+
+        try {
+            Dara::send($this->hostHeaderRequest('localhost:' . $port), $runtime);
+            self::fail('ipv4Only stream request must not reach an IPv6-only server');
+        } catch (ConnectException $e) {
+            self::assertStringMissing('Could not resolve', $e->getMessage());
+        }
+
+        try {
+            Dara::send($this->hostHeaderRequest('[::1]:' . $port), $runtime);
+            self::fail('ipv4Only stream request must not dial an IPv6 literal');
+        } catch (ConnectException $e) {
+            self::assertStringHas('refusing to connect to IPv6 address ::1', $e->getMessage());
+        }
+
+        try {
+            Dara::send($this->hostHeaderRequest('ipv4only-nonexistent.invalid'), $runtime);
+            self::fail('unresolvable host must fail');
+        } catch (ConnectException $e) {
+            self::assertStringHas("could not resolve IPv4 address for host 'ipv4only-nonexistent.invalid'", $e->getMessage());
+        }
+    }
+
+    public function testStreamIpv4OnlyRewritesRequestForHandler()
+    {
+        $captured = [];
+        Dara::config(['handler' => HandlerStack::create(function ($request, array $options) use (&$captured) {
+            $captured[] = [$request, $options];
+
+            return new FulfilledPromise(new PsrResponse(200));
+        })]);
+
+        $https = $this->hostHeaderRequest('localhost:8443');
+        $https->protocol = 'https';
+        Dara::send($https, ['ipv4Only' => true, 'stream' => true]);
+        list($request, $options) = $captured[0];
+        self::assertSame('127.0.0.1:8443', $request->getUri()->getHost());
+        self::assertSame('localhost:8443', $request->getHeaderLine('Host'));
+        self::assertSame('localhost', $options['stream_context']['ssl']['peer_name']);
+        self::assertArrayNotHasKey('force_ip_resolve', $options);
+
+        // IPv4 literals and proxied requests are left alone
+        Dara::send($this->hostHeaderRequest('127.0.0.1:80'), ['ipv4Only' => true, 'stream' => true]);
+        Dara::send($this->hostHeaderRequest('localhost'), [
+            'ipv4Only' => true,
+            'stream' => true,
+            'httpProxy' => 'http://proxy.test:3128',
+        ]);
+        self::assertSame('127.0.0.1:80', $captured[1][0]->getUri()->getHost());
+        self::assertSame('localhost', $captured[2][0]->getUri()->getHost());
+        self::assertArrayNotHasKey('stream_context', $captured[2][1]);
+        self::assertArrayNotHasKey('force_ip_resolve', $captured[2][1]);
+
+        // non-stream requests keep using force_ip_resolve
+        Dara::send($this->hostHeaderRequest('localhost'), ['ipv4Only' => true]);
+        self::assertSame('localhost', $captured[3][0]->getUri()->getHost());
+        self::assertSame('v4', $captured[3][1]['force_ip_resolve']);
+    }
+
+    public function testUsesProxy()
+    {
+        $method = new \ReflectionMethod(Dara::class, 'usesProxy');
+        $method->setAccessible(true);
+        $uses = function ($scheme, $host, array $options) use ($method) {
+            return $method->invoke(null, $scheme, $host, $options);
+        };
+
+        self::assertFalse($uses('http', 'a.com', []));
+        self::assertTrue($uses('http', 'a.com', ['proxy' => 'http://p:1']));
+        self::assertFalse($uses('http', 'a.com', ['proxy' => '']));
+        self::assertFalse($uses('http', 'a.com', ['proxy' => ['https' => 'http://p:1']]));
+        self::assertTrue($uses('https', 'a.com', ['proxy' => ['https' => 'http://p:1']]));
+        $proxy = ['http' => 'http://p:1'];
+        self::assertFalse($uses('http', 'a.com', ['proxy' => $proxy + ['no' => '*']]));
+        self::assertFalse($uses('http', 'a.com', ['proxy' => $proxy + ['no' => 'b.com, a.com']]));
+        self::assertFalse($uses('http', 'x.a.com', ['proxy' => $proxy + ['no' => ['.a.com']]]));
+        self::assertFalse($uses('http', 'x.a.com', ['proxy' => $proxy + ['no' => 'a.com']]));
+        self::assertTrue($uses('http', 'xa.com', ['proxy' => $proxy + ['no' => 'a.com']]));
+        self::assertTrue($uses('http', 'a.com', ['proxy' => $proxy + ['no' => ',']]));
+    }
+
+    public function testWebSocketThroughHttpProxy()
+    {
+        $wsPort = $this->startWebSocketServer('127.0.0.1');
+        list($proxyPort, $log) = $this->startProxy('');
+
+        foreach ([[], ['ipv4Only' => true]] as $extra) {
+            $client = WebSocketUtil::newDefaultWebSocketClient(new AbstractWebSocketHandler());
+            $client->connect($this->wsRequest('fixture.test', $wsPort), $this->wsRuntime($extra + [
+                'httpProxy' => 'http://127.0.0.1:' . $proxyPort,
+            ]));
+            self::assertTrue($client->isConnected());
+            $client->disconnect();
+        }
+        self::assertSame(
+            str_repeat('CONNECT fixture.test:' . $wsPort . " HTTP/1.1\n", 2),
+            file_get_contents($log)
+        );
+
+        $client = WebSocketUtil::newDefaultWebSocketClient(new AbstractWebSocketHandler());
+        try {
+            $client->connect($this->wsRequest('[::1]', $wsPort), $this->wsRuntime([
+                'ipv4Only' => true,
+                'httpProxy' => 'http://127.0.0.1:' . $proxyPort,
+            ]));
+            self::fail('ipv4Only must reject an IPv6 literal target');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('refusing to connect to IPv6 address', $e->getMessage());
+        }
+        self::assertFalse($client->isConnected());
+    }
+
+    public function testWebSocketHttpProxyAuthAndFailures()
+    {
+        $wsPort = $this->startWebSocketServer('127.0.0.1');
+        list($authPort) = $this->startProxy('auth:user:p@ss');
+        list($closePort) = $this->startProxy('close');
+
+        $client = WebSocketUtil::newDefaultWebSocketClient(new AbstractWebSocketHandler());
+        $client->connect($this->wsRequest('fixture.test', $wsPort), $this->wsRuntime([
+            'httpProxy' => 'http://user:p%40ss@127.0.0.1:' . $authPort,
+        ]));
+        self::assertTrue($client->isConnected());
+        $client->disconnect();
+
+        $failures = [
+            'http://127.0.0.1:' . $authPort => 'Proxy refused CONNECT to fixture.test:' . $wsPort . ': HTTP/1.1 407',
+            '127.0.0.1:' . $closePort => 'Proxy closed the connection',
+        ];
+        foreach ($failures as $proxy => $message) {
+            $client = WebSocketUtil::newDefaultWebSocketClient(new AbstractWebSocketHandler());
+            try {
+                $client->connect($this->wsRequest('fixture.test', $wsPort), $this->wsRuntime(['httpProxy' => $proxy]));
+                self::fail('expected proxy failure for ' . $proxy);
+            } catch (Exception $e) {
+                self::assertStringHas($message, $this->messages($e));
+            }
+            self::assertFalse($client->isConnected());
+        }
+    }
+
+    public function testHttpConnectProxyConnectorRejectsInvalidInput()
+    {
+        $inner = new \React\Socket\Connector(\React\EventLoop\Factory::create());
+        try {
+            new HttpConnectProxyConnector('http://', $inner);
+            self::fail('expected invalid proxy URL');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('Invalid proxy URL', $e->getMessage());
+        }
+
+        $error = null;
+        (new HttpConnectProxyConnector('127.0.0.1:1', $inner))->connect('no-port')->then(null, function ($e) use (&$error) {
+            $error = $e;
+        });
+        self::assertInstanceOf(\InvalidArgumentException::class, $error);
+    }
+
+    private static function assertStringHas($needle, $haystack)
+    {
+        self::assertTrue(false !== strpos($haystack, $needle), sprintf('"%s" not found in "%s"', $needle, $haystack));
+    }
+
+    private static function assertStringMissing($needle, $haystack)
+    {
+        self::assertTrue(false === strpos($haystack, $needle), sprintf('"%s" unexpectedly found in "%s"', $needle, $haystack));
+    }
+
+    private function messages(Exception $e)
+    {
+        $messages = '';
+        for (; null !== $e; $e = $e->getPrevious()) {
+            $messages .= $e->getMessage() . "\n";
+        }
+
+        return $messages;
+    }
+
+    private function startProxy($mode)
+    {
+        $port = $this->freePort('127.0.0.1');
+        $log = tempnam(sys_get_temp_dir(), 'dara-proxy-');
+        $this->spawn(sprintf(
+            '%s %s %d %s %s',
+            escapeshellarg($this->phpCli()),
+            escapeshellarg(dirname(__DIR__) . '/Mock/ConnectProxyServer.php'),
+            $port,
+            escapeshellarg($log),
+            escapeshellarg($mode)
+        ), '127.0.0.1', $port);
+        return [$port, $log];
+    }
+
+    private function hostHeaderRequest($host)
+    {
+        $request = new Request();
+        $request->method = 'GET';
+        $request->protocol = 'http';
+        $request->headers['host'] = $host;
+        $request->pathname = '/';
+
+        return $request;
     }
 
     private function localRequest($port)
