@@ -7,6 +7,7 @@ use AlibabaCloud\Dara\Exception\DaraException;
 use AlibabaCloud\Dara\RetryPolicy\RetryOptions;
 use AlibabaCloud\Dara\RetryPolicy\RetryPolicyContext;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\RequestOptions;
@@ -62,7 +63,7 @@ class Dara
         }
 
         $client = self::clientFor($config);
-        $config = self::resolveConfig($config);
+        list($request, $config) = self::prepare($request, $config);
         $res = $client->send(
             $request,
             $config
@@ -81,7 +82,7 @@ class Dara
         }
 
         $client = self::clientFor($config);
-        $config = self::resolveConfig($config);
+        list($request, $config) = self::prepare($request, $config);
 
         return $client->sendAsync(
             $request,
@@ -129,6 +130,93 @@ class Dara
         }
 
         return (bool) $ipv4Only;
+    }
+
+    /**
+     * @return array [RequestInterface, array guzzle options]
+     */
+    private static function prepare(RequestInterface $request, array $runtime)
+    {
+        $options = self::resolveConfig($runtime);
+        if (self::isIpv4Only($runtime) && !empty($options[RequestOptions::STREAM])) {
+            return self::pinStreamToIpv4($request, $options);
+        }
+
+        return [$request, $options];
+    }
+
+    /**
+     * Streaming requests go through Guzzle's StreamHandler, whose force_ip_resolve
+     * looks the host up with dns_get_record(): that bypasses /etc/hosts and breaks on
+     * hosts carrying a port. Resolve A records with the system resolver instead and
+     * connect to the IPv4 literal, keeping the Host header and TLS peer name.
+     *
+     * @return array [RequestInterface, array guzzle options]
+     */
+    private static function pinStreamToIpv4(RequestInterface $request, array $options)
+    {
+        unset($options[RequestOptions::FORCE_IP_RESOLVE]);
+        $uri = $request->getUri();
+        // Request::getPsrRequest() may put a "host:port" Host header into the URI host
+        $host = $uri->getHost();
+        $port = '';
+        if (preg_match('/^\[([^\]]*)\](:\d+)?$/', $host, $m)) {
+            $host = $m[1];
+        } elseif (preg_match('/^([^:]*)(:\d+)$/', $host, $m)) {
+            list(, $host, $port) = $m;
+        }
+
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            throw new ConnectException(sprintf('ipv4Only is enabled, refusing to connect to IPv6 address %s', $host), $request);
+        }
+        // the proxy resolves the target itself
+        if (filter_var($host, FILTER_VALIDATE_IP) || self::usesProxy($uri->getScheme(), $host, $options)) {
+            return [$request, $options];
+        }
+
+        $ips = gethostbynamel($host);
+        if (false === $ips || empty($ips)) {
+            throw new ConnectException(sprintf("ipv4Only is enabled, could not resolve IPv4 address for host '%s'", $host), $request);
+        }
+        $options['stream_context']['ssl']['peer_name'] = $host;
+
+        return [$request->withUri($uri->withHost($ips[0] . $port), true), $options];
+    }
+
+    /**
+     * @param string $scheme
+     * @param string $host
+     *
+     * @return bool
+     */
+    private static function usesProxy($scheme, $host, array $options)
+    {
+        if (!isset($options['proxy'])) {
+            return false;
+        }
+        $proxy = $options['proxy'];
+        if (!\is_array($proxy)) {
+            return !empty($proxy);
+        }
+        if (empty($proxy[$scheme])) {
+            return false;
+        }
+        if (empty($proxy['no'])) {
+            return true;
+        }
+        $noProxy = \is_array($proxy['no']) ? $proxy['no'] : explode(',', $proxy['no']);
+        foreach ($noProxy as $area) {
+            $area = trim($area);
+            if ('*' === $area || $area === $host) {
+                return false;
+            }
+            $suffix = '.' . ltrim($area, '.');
+            if ('' !== $area && substr($host, -\strlen($suffix)) === $suffix) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
