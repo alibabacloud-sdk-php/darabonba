@@ -4,6 +4,7 @@ namespace AlibabaCloud\Dara\Tests\Unit;
 
 use AlibabaCloud\Dara\AbstractWebSocketHandler;
 use AlibabaCloud\Dara\Dara;
+use AlibabaCloud\Dara\DefaultWebSocketClient;
 use AlibabaCloud\Dara\HttpConnectProxyConnector;
 use AlibabaCloud\Dara\Request;
 use AlibabaCloud\Dara\WebSocketUtil;
@@ -321,6 +322,47 @@ class Ipv4OnlyTest extends TestCase
             self::assertStringHas('refusing to connect to IPv6 address', $e->getMessage());
         }
         self::assertFalse($client->isConnected());
+
+        $client = WebSocketUtil::newDefaultWebSocketClient(new AbstractWebSocketHandler());
+        try {
+            $client->connect($this->wsRequest('fixture.test', $wsPort), $this->wsRuntime([
+                'ipv4Only' => true,
+                'httpProxy' => 'http://[::1]:' . $proxyPort,
+            ]));
+            self::fail('ipv4Only must reject an IPv6-only HTTP proxy');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('refusing to connect to IPv6 proxy address', $e->getMessage());
+        }
+        self::assertFalse($client->isConnected());
+    }
+
+    public function testPinProxyUrlToIpv4()
+    {
+        $method = new \ReflectionMethod(DefaultWebSocketClient::class, 'pinProxyUrlToIpv4');
+        $method->setAccessible(true);
+        self::assertSame('http://127.0.0.1:8080', $method->invoke(null, 'http://127.0.0.1:8080'));
+        self::assertSame('http://user:p%40ss@127.0.0.1:8080', $method->invoke(null, 'http://user:p%40ss@127.0.0.1:8080'));
+        self::assertSame('http://127.0.0.1:1', $method->invoke(null, '127.0.0.1:1'));
+        $pinned = $method->invoke(null, 'http://localhost:8080/path?x=1');
+        self::assertStringStartsWith('http://127.0.0.1:8080/path?x=1', $pinned);
+        try {
+            $method->invoke(null, 'http://[::1]:8080');
+            self::fail('expected IPv6 proxy host to be rejected');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('IPv6 proxy address', $e->getMessage());
+        }
+        try {
+            $method->invoke(null, 'http:///');
+            self::fail('expected invalid proxy URL');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('Invalid proxy URL', $e->getMessage());
+        }
+        try {
+            $method->invoke(null, 'http://ipv4only-no-such-host.invalid:8080');
+            self::fail('expected unresolvable proxy host');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('could not resolve IPv4 address for proxy host', $e->getMessage());
+        }
     }
 
     public function testWebSocketHttpProxyAuthAndFailures()
