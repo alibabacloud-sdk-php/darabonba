@@ -47,6 +47,9 @@
         "ext-sockets": "To use client-side monitoring"
     },
     "autoload": {
+        "files": [
+            "src/psr7-compat.php"
+        ],
         "psr-4": {
             "AlibabaCloud\\Dara\\": "src"
         }

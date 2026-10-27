@@ -189,8 +189,14 @@ class Request extends PsrRequest
         }
 
         if (!$detected) {
-            // stream_for() exists on 1.x and was removed in 2.0.
-            $detected = \function_exists('\\GuzzleHttp\\Psr7\\stream_for') ? 1 : 2;
+            // psr7 2.x requires PHP >= 7.2.5 and adds a return type on Utils::streamFor().
+            // stream_for() cannot be used here: this package defines it on 2.x as well.
+            if (PHP_VERSION_ID < 70205 || !class_exists('GuzzleHttp\\Psr7\\Utils')) {
+                $detected = 1;
+            } else {
+                $method = new \ReflectionMethod('GuzzleHttp\\Psr7\\Utils', 'streamFor');
+                $detected = $method->hasReturnType() ? 2 : 1;
+            }
         }
 
         $major = $detected;

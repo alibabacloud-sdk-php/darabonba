@@ -12,6 +12,24 @@ use PHPUnit\Framework\TestCase;
  */
 class RequestTest extends TestCase
 {
+    private function skipUnlessPsr7V2()
+    {
+        $major = 1;
+        if (class_exists('Composer\\InstalledVersions')) {
+            try {
+                $version = \Composer\InstalledVersions::getVersion('guzzlehttp/psr7');
+                if (is_string($version) && preg_match('/^v?(\d+)/', $version, $match)) {
+                    $major = (int) $match[1];
+                }
+            } catch (\Exception $e) {
+                $major = 1;
+            }
+        }
+        if ($major < 2) {
+            $this->markTestSkipped('guzzlehttp/psr7 1.x keeps the port inside the host');
+        }
+    }
+
     public static function testGetPsrRequest()
     {
         $request                  = new Request('get', '');
@@ -24,9 +42,7 @@ class RequestTest extends TestCase
 
     public function testPsr7V2SplitsPortOutOfHostHeader()
     {
-        if (\function_exists('\\GuzzleHttp\\Psr7\\stream_for')) {
-            $this->markTestSkipped('guzzlehttp/psr7 1.x keeps the port inside the host');
-        }
+        $this->skipUnlessPsr7V2();
 
         $request = new Request('get', '');
         $request->protocol = 'https';
@@ -49,9 +65,7 @@ class RequestTest extends TestCase
 
     public function testPsr7V2KeepsAnExplicitPort()
     {
-        if (\function_exists('\\GuzzleHttp\\Psr7\\stream_for')) {
-            $this->markTestSkipped('guzzlehttp/psr7 1.x keeps the port inside the host');
-        }
+        $this->skipUnlessPsr7V2();
 
         $request = new Request('get', '');
         $request->protocol = 'http';
@@ -65,9 +79,7 @@ class RequestTest extends TestCase
 
     public function testBracketedIpv6HostKeepsItsPortOnPsr7V2()
     {
-        if (\function_exists('\\GuzzleHttp\\Psr7\\stream_for')) {
-            $this->markTestSkipped('guzzlehttp/psr7 1.x keeps the port inside the host');
-        }
+        $this->skipUnlessPsr7V2();
 
         $request = new Request('get', '');
         $request->protocol = 'https';
