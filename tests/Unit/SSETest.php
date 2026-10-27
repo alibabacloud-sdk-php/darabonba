@@ -51,7 +51,8 @@ class SSETest extends TestCase
         $request = new Request();
         $request->method = 'GET';
         $request->protocol = 'http';
-        $request->headers['host'] = 'localhost:8000';
+        $request->headers['host'] = 'localhost';
+        $request->port = 8000;
         $request->headers['Accept'] = 'text/event-stream';
         $request->pathname = '/sse';
         
@@ -79,7 +80,8 @@ class SSETest extends TestCase
         $request = new Request();
         $request->method = 'GET';
         $request->protocol = 'http';
-        $request->headers['host'] = 'localhost:8000';
+        $request->headers['host'] = 'localhost';
+        $request->port = 8000;
         $request->headers['Accept'] = 'text/event-stream';
         $request->pathname = '/sse_with_no_spaces';
         
@@ -107,7 +109,8 @@ class SSETest extends TestCase
         $request = new Request();
         $request->method = 'GET';
         $request->protocol = 'http';
-        $request->headers['host'] = 'localhost:8000';
+        $request->headers['host'] = 'localhost';
+        $request->port = 8000;
         $request->headers['Accept'] = 'text/event-stream';
         $request->pathname = '/sse_invalid_retry';
         
@@ -135,7 +138,8 @@ class SSETest extends TestCase
         $request = new Request();
         $request->method = 'GET';
         $request->protocol = 'http';
-        $request->headers['host'] = 'localhost:8000';
+        $request->headers['host'] = 'localhost';
+        $request->port = 8000;
         $request->headers['Accept'] = 'text/event-stream';
         $request->pathname = '/sse_with_data_divided';
         

@@ -78,13 +78,8 @@ class Request extends PsrRequest
             $uri = $uri->withPath($this->pathname);
         }
 
-        if (isset($this->headers['host']) && is_string($this->headers['host'])) {
-            list($host, $port) = self::splitHostHeader($this->headers['host']);
-            $uri = $uri->withHost($host);
-            // psr7 2.13 rejects a host that still contains ":port".
-            if ($port !== null && !$this->port) {
-                $uri = $uri->withPort($port);
-            }
+        if (isset($this->headers['host'])) {
+            $uri = $uri->withHost($this->headers['host']);
         }
 
         $request = $request->withUri($uri);
@@ -114,40 +109,6 @@ class Request extends PsrRequest
         }
 
         return $request;
-    }
-
-    /**
-     * Separate a Host header into the host and an optional port.
-     * "localhost:8000" and "[::1]:8000" are both valid Host values, but the
-     * port is not part of the URI host.
-     *
-     * @param string $hostHeader
-     *
-     * @return array
-     */
-    private static function splitHostHeader($hostHeader)
-    {
-        if ($hostHeader !== '' && $hostHeader[0] === '[') {
-            $end = strpos($hostHeader, ']');
-            if ($end !== false) {
-                $host = substr($hostHeader, 0, $end + 1);
-                $rest = substr($hostHeader, $end + 1);
-                if (strlen($rest) > 1 && $rest[0] === ':') {
-                    return array($host, (int) substr($rest, 1));
-                }
-
-                return array($host, null);
-            }
-        }
-
-        if (substr_count($hostHeader, ':') === 1) {
-            $parts = explode(':', $hostHeader, 2);
-            if ($parts[1] !== '' && ctype_digit($parts[1])) {
-                return array($parts[0], (int) $parts[1]);
-            }
-        }
-
-        return array($hostHeader, null);
     }
 
     /**
