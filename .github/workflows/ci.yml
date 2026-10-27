@@ -17,7 +17,22 @@ jobs:
       matrix:
         operating-system: [ubuntu-latest]
         php-versions: ['5.6', '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2']
-    name: PHP ${{ matrix.php-versions }} Test on ${{ matrix.operating-system }}
+        # psr7 2.x requires PHP >= 7.2.5, so older jobs only run the 1.x line.
+        deps: ['rfc6455-0.3.0-psr7-1', 'rfc6455-0.3.1-psr7-2', 'pawl-0.4.0-rfc6455-0.3.1-psr7-2']
+        exclude:
+          - php-versions: '5.6'
+            deps: 'rfc6455-0.3.1-psr7-2'
+          - php-versions: '7.0'
+            deps: 'rfc6455-0.3.1-psr7-2'
+          - php-versions: '7.1'
+            deps: 'rfc6455-0.3.1-psr7-2'
+          - php-versions: '5.6'
+            deps: 'pawl-0.4.0-rfc6455-0.3.1-psr7-2'
+          - php-versions: '7.0'
+            deps: 'pawl-0.4.0-rfc6455-0.3.1-psr7-2'
+          - php-versions: '7.1'
+            deps: 'pawl-0.4.0-rfc6455-0.3.1-psr7-2'
+    name: PHP ${{ matrix.php-versions }} ${{ matrix.deps }} on ${{ matrix.operating-system }}
 
     steps:
     - name: Checkout
@@ -36,7 +51,63 @@ jobs:
       run: composer validate
 
     - name: Install dependencies
-      run: composer install --prefer-dist --no-progress --no-suggest
+      env:
+        DEPS: ${{ matrix.deps }}
+      run: |
+        set -euo pipefail
+        # Composer 2.2 (PHP 5.6–7.1) only accepts --with for root requirements.
+        # psr7 is transitive, so pin it by adding a root requirement in this checkout.
+        if [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
+          composer require --no-update --no-interaction \
+            "ratchet/rfc6455:0.3.0" \
+            "guzzlehttp/psr7:^1.7"
+        elif [ "$DEPS" = "pawl-0.4.0-rfc6455-0.3.1-psr7-2" ]; then
+          composer require --no-update --no-interaction \
+            "ratchet/pawl:0.4.0" \
+            "ratchet/rfc6455:0.3.1" \
+            "guzzlehttp/psr7:^2.0"
+        else
+          composer require --no-update --no-interaction \
+            "ratchet/rfc6455:0.3.1" \
+            "guzzlehttp/psr7:^2.0"
+        fi
+        composer update --prefer-dist --no-progress --with-all-dependencies
+
+    - name: Assert dependency set
+      env:
+        DEPS: ${{ matrix.deps }}
+      run: |
+        php -r '
+          $lock = json_decode(file_get_contents("composer.lock"), true);
+          $installed = array();
+          foreach (array_merge($lock["packages"], $lock["packages-dev"]) as $package) {
+            $installed[$package["name"]] = ltrim($package["version"], "v");
+          }
+          $rfc = $installed["ratchet/rfc6455"];
+          $psr = $installed["guzzlehttp/psr7"];
+          $pawl = $installed["ratchet/pawl"];
+          $rfcParts = explode(".", $rfc);
+          $rfcNorm = $rfcParts[0].".".(isset($rfcParts[1]) ? $rfcParts[1] : "0").".".(isset($rfcParts[2]) ? $rfcParts[2] : "0");
+          $pawlParts = explode(".", $pawl);
+          $pawlNorm = $pawlParts[0].".".(isset($pawlParts[1]) ? $pawlParts[1] : "0").".".(isset($pawlParts[2]) ? $pawlParts[2] : "0");
+          fwrite(STDOUT, "ratchet/rfc6455 ".$rfc."\nratchet/pawl ".$pawl."\nguzzlehttp/psr7 ".$psr."\n");
+          $deps = getenv("DEPS");
+          if ($deps === "rfc6455-0.3.0-psr7-1") {
+            // Composer records the 0.3.0 tag as 0.3.
+            if ($rfcNorm !== "0.3.0" || strpos($psr, "1.") !== 0) {
+              fwrite(STDERR, "expected rfc6455 0.3.0 and psr7 1.x\n");
+              exit(1);
+            }
+          } elseif ($deps === "pawl-0.4.0-rfc6455-0.3.1-psr7-2") {
+            if ($pawlNorm !== "0.4.0" || $rfcNorm !== "0.3.1" || strpos($psr, "2.") !== 0) {
+              fwrite(STDERR, "expected pawl 0.4.0, rfc6455 0.3.1 and psr7 2.x\n");
+              exit(1);
+            }
+          } elseif ($rfcNorm !== "0.3.1" || strpos($psr, "2.") !== 0) {
+            fwrite(STDERR, "expected rfc6455 0.3.1 and psr7 2.x\n");
+            exit(1);
+          }
+        '
 
     - name: Run unit test case
       run: composer unit

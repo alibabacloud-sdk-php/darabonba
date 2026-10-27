@@ -79,7 +79,7 @@ class Request extends PsrRequest
         }
 
         if (isset($this->headers['host'])) {
-            $uri = $uri->withHost($this->headers['host']);
+            $uri = self::applyHostHeader($uri, $this->headers['host'], $this->port);
         }
 
         $request = $request->withUri($uri);
@@ -109,6 +109,99 @@ class Request extends PsrRequest
         }
 
         return $request;
+    }
+
+    /**
+     * psr7 1.x accepts a Host value that still contains ":port". psr7 2.x
+     * rejects that, so the port is applied with withPort() instead.
+     *
+     * @param \Psr\Http\Message\UriInterface $uri
+     * @param mixed                          $hostHeader
+     * @param int|null                       $explicitPort
+     *
+     * @return \Psr\Http\Message\UriInterface
+     */
+    private static function applyHostHeader($uri, $hostHeader, $explicitPort)
+    {
+        if (!is_string($hostHeader) || self::psr7MajorVersion() < 2) {
+            return $uri->withHost($hostHeader);
+        }
+
+        list($host, $port) = self::splitHostHeader($hostHeader);
+        $uri = $uri->withHost($host);
+        if ($port !== null && !$explicitPort) {
+            $uri = $uri->withPort($port);
+        }
+
+        return $uri;
+    }
+
+    /**
+     * @param string $hostHeader
+     *
+     * @return array
+     */
+    private static function splitHostHeader($hostHeader)
+    {
+        if ($hostHeader !== '' && $hostHeader[0] === '[') {
+            $end = strpos($hostHeader, ']');
+            if ($end !== false) {
+                $host = substr($hostHeader, 0, $end + 1);
+                $rest = substr($hostHeader, $end + 1);
+                if (strlen($rest) > 1 && $rest[0] === ':') {
+                    return array($host, (int) substr($rest, 1));
+                }
+
+                return array($host, null);
+            }
+        }
+
+        if (substr_count($hostHeader, ':') === 1) {
+            $parts = explode(':', $hostHeader, 2);
+            if ($parts[1] !== '' && ctype_digit($parts[1])) {
+                return array($parts[0], (int) $parts[1]);
+            }
+        }
+
+        return array($hostHeader, null);
+    }
+
+    /**
+     * @return int
+     */
+    private static function psr7MajorVersion()
+    {
+        static $major = null;
+        if ($major !== null) {
+            return $major;
+        }
+
+        $detected = null;
+        if (class_exists('Composer\\InstalledVersions')) {
+            try {
+                $version = \Composer\InstalledVersions::getVersion('guzzlehttp/psr7');
+                if (is_string($version) && preg_match('/^v?(\d+)/', $version, $match)) {
+                    $detected = (int) $match[1];
+                }
+            } catch (\Exception $e) {
+                $detected = null;
+            }
+        }
+
+        if (!$detected) {
+            // psr7 2.x requires PHP >= 7.2.5 and adds a return type on Utils::streamFor().
+            // stream_for() cannot be used here: this package defines it on 2.x as well.
+            if (PHP_VERSION_ID < 70205 || !class_exists('GuzzleHttp\\Psr7\\Utils')) {
+                $detected = 1;
+            } else {
+                $method = new \ReflectionMethod('GuzzleHttp\\Psr7\\Utils', 'streamFor');
+                $detected = $method->hasReturnType() ? 2 : 1;
+            }
+        }
+
+        $major = $detected;
+
+        return $major;
     }
 
     /**
