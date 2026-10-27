@@ -50,15 +50,18 @@ jobs:
         DEPS: ${{ matrix.deps }}
       run: |
         set -euo pipefail
+        # Composer 2.2 (PHP 5.6–7.1) only accepts --with for root requirements.
+        # psr7 is transitive, so pin it by adding a root requirement in this checkout.
         if [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
-          composer update --prefer-dist --no-progress --no-suggest --with-all-dependencies \
-            --with ratchet/rfc6455:0.3.0 \
-            --with guzzlehttp/psr7:^1.7
+          composer require --no-update --no-interaction \
+            "ratchet/rfc6455:0.3.0" \
+            "guzzlehttp/psr7:^1.7"
         else
-          composer update --prefer-dist --no-progress --no-suggest --with-all-dependencies \
-            --with ratchet/rfc6455:0.3.1 \
-            --with guzzlehttp/psr7:^2.0
+          composer require --no-update --no-interaction \
+            "ratchet/rfc6455:0.3.1" \
+            "guzzlehttp/psr7:^2.0"
         fi
+        composer update --prefer-dist --no-progress --with-all-dependencies
 
     - name: Assert dependency set
       env:
