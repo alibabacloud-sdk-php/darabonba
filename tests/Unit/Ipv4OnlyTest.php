@@ -248,7 +248,8 @@ class Ipv4OnlyTest extends TestCase
         $https->protocol = 'https';
         Dara::send($https, ['ipv4Only' => true, 'stream' => true]);
         list($request, $options) = $captured[0];
-        self::assertSame('127.0.0.1:8443', $request->getUri()->getHost());
+        // psr7 2.x: host/port are separate; psr7 1.x may embed "host:port" in getHost()
+        self::assertUriHostPort($request->getUri(), '127.0.0.1', 8443);
         self::assertSame('localhost:8443', $request->getHeaderLine('Host'));
         self::assertSame('localhost', $options['stream_context']['ssl']['peer_name']);
         self::assertArrayNotHasKey('force_ip_resolve', $options);
@@ -260,14 +261,15 @@ class Ipv4OnlyTest extends TestCase
             'stream' => true,
             'httpProxy' => 'http://proxy.test:3128',
         ]);
-        self::assertSame('127.0.0.1:80', $captured[1][0]->getUri()->getHost());
-        self::assertSame('localhost', $captured[2][0]->getUri()->getHost());
+        // http:80 is the default port → getPort() may be null on psr7 2.x
+        self::assertSame('127.0.0.1', $this->uriHostOnly($captured[1][0]->getUri()));
+        self::assertSame('localhost', $this->uriHostOnly($captured[2][0]->getUri()));
         self::assertArrayNotHasKey('stream_context', $captured[2][1]);
         self::assertArrayNotHasKey('force_ip_resolve', $captured[2][1]);
 
         // non-stream requests keep using force_ip_resolve
         Dara::send($this->hostHeaderRequest('localhost'), ['ipv4Only' => true]);
-        self::assertSame('localhost', $captured[3][0]->getUri()->getHost());
+        self::assertSame('localhost', $this->uriHostOnly($captured[3][0]->getUri()));
         self::assertSame('v4', $captured[3][1]['force_ip_resolve']);
     }
 
@@ -444,6 +446,52 @@ class Ipv4OnlyTest extends TestCase
             escapeshellarg($mode)
         ), '127.0.0.1', $port);
         return [$port, $log];
+    }
+
+    /**
+     * Assert URI host/port across psr7 1.x (may embed "host:port" in getHost()) and 2.x.
+     *
+     * @param \Psr\Http\Message\UriInterface $uri
+     * @param string                         $expectedHost
+     * @param int                            $expectedPort
+     */
+    private static function assertUriHostPort($uri, $expectedHost, $expectedPort)
+    {
+        self::assertSame($expectedHost, self::uriHostOnlyStatic($uri));
+        $port = $uri->getPort();
+        $host = $uri->getHost();
+        if (null === $port && preg_match('/:(\d+)$/', $host, $m)) {
+            $port = (int) $m[1];
+        }
+        self::assertSame($expectedPort, $port);
+    }
+
+    /**
+     * @param \Psr\Http\Message\UriInterface $uri
+     *
+     * @return string
+     */
+    private function uriHostOnly($uri)
+    {
+        return self::uriHostOnlyStatic($uri);
+    }
+
+    /**
+     * @param \Psr\Http\Message\UriInterface $uri
+     *
+     * @return string
+     */
+    private static function uriHostOnlyStatic($uri)
+    {
+        $host = $uri->getHost();
+        if (preg_match('/^\[([^\]]*)\](?::\d+)?$/', $host, $m)) {
+            return $m[1];
+        }
+        if (preg_match('/^([^:]*):\d+$/', $host, $m)) {
+            return $m[1];
+        }
+
+        return $host;
     }
 
     private function hostHeaderRequest($host)

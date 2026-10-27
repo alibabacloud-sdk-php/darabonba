@@ -157,13 +157,19 @@ class Dara
     {
         unset($options[RequestOptions::FORCE_IP_RESOLVE]);
         $uri = $request->getUri();
-        // Request::getPsrRequest() may put a "host:port" Host header into the URI host
+        // psr7 2.x keeps host/port separate; psr7 1.x may still embed "host:port" in getHost()
         $host = $uri->getHost();
-        $port = '';
-        if (preg_match('/^\[([^\]]*)\](:\d+)?$/', $host, $m)) {
+        $port = $uri->getPort();
+        if (preg_match('/^\[([^\]]*)\](?::(\d+))?$/', $host, $m)) {
             $host = $m[1];
-        } elseif (preg_match('/^([^:]*)(:\d+)$/', $host, $m)) {
-            list(, $host, $port) = $m;
+            if (null === $port && isset($m[2]) && '' !== $m[2]) {
+                $port = (int) $m[2];
+            }
+        } elseif (preg_match('/^([^:]*):(\d+)$/', $host, $m)) {
+            $host = $m[1];
+            if (null === $port) {
+                $port = (int) $m[2];
+            }
         }
 
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
@@ -180,7 +186,12 @@ class Dara
         }
         $options['stream_context']['ssl']['peer_name'] = $host;
 
-        return [$request->withUri($uri->withHost($ips[0] . $port), true), $options];
+        $uri = $uri->withHost($ips[0]);
+        if (null !== $port) {
+            $uri = $uri->withPort($port);
+        }
+
+        return [$request->withUri($uri, true), $options];
     }
 
     /**
