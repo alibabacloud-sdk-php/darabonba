@@ -16,6 +16,18 @@ composer require alibabacloud/darabonba --optimize-autoloader
 
 > Some users may not be able to install due to network problems, you can try to switch the Composer mirror.
 
+## PHP compatibility
+
+PHP 8.3, 8.4 and 8.5 are tested with current WebSocket dependencies. When
+upgrading PHP with an existing Composer lock file, update `ratchet/pawl` and its
+dependencies as well (`composer update ratchet/pawl --with-all-dependencies`).
+PHP 8.4+ needs Pawl 0.4.3 or newer to avoid implicit-nullability deprecations in
+the upstream connector. Older PHP versions retain the existing dependency matrix.
+
+The runtime no longer requires the abandoned `clue/block-react` package.
+WebSocket handshakes still use their own event loop, a deadline and cancellation
+of timed-out connections; the process-wide React event loop is not replaced.
+
 ## Changelog
 
 Detailed changes for each release are documented in the [release notes](CHANGELOG.md).

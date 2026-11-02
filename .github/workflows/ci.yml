@@ -19,6 +19,18 @@ jobs:
         php-versions: ['5.6', '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2']
         # psr7 2.x requires PHP >= 7.2.5, so older jobs only run the 1.x line.
         deps: ['rfc6455-0.3.0-psr7-1', 'rfc6455-0.3.1-psr7-2', 'pawl-0.4.0-rfc6455-0.3.1-psr7-2']
+        # Old Pawl releases intentionally covered above have implicit nullable
+        # signatures. New PHP jobs exercise the maintained dependency versions.
+        include:
+          - operating-system: ubuntu-latest
+            php-versions: '8.3'
+            deps: modern
+          - operating-system: ubuntu-latest
+            php-versions: '8.4'
+            deps: modern
+          - operating-system: ubuntu-latest
+            php-versions: '8.5'
+            deps: modern
         exclude:
           - php-versions: '5.6'
             deps: 'rfc6455-0.3.1-psr7-2'
@@ -57,7 +69,11 @@ jobs:
         set -euo pipefail
         # Composer 2.2 (PHP 5.6–7.1) only accepts --with for root requirements.
         # psr7 is transitive, so pin it by adding a root requirement in this checkout.
-        if [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
+        if [ "$DEPS" = "modern" ]; then
+          composer require --no-update --no-interaction \
+            "ratchet/pawl:^0.4.3" \
+            "guzzlehttp/psr7:^2.0"
+        elif [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
           composer require --no-update --no-interaction \
             "ratchet/rfc6455:0.3.0" \
             "guzzlehttp/psr7:^1.7"
@@ -103,11 +119,20 @@ jobs:
               fwrite(STDERR, "expected pawl 0.4.0, rfc6455 0.3.1 and psr7 2.x\n");
               exit(1);
             }
+          } elseif ($deps === "modern") {
+            if (version_compare($pawlNorm, "0.4.3", "<") || strpos($psr, "2.") !== 0) {
+              fwrite(STDERR, "expected Pawl >=0.4.3 and psr7 2.x\n");
+              exit(1);
+            }
           } elseif ($rfcNorm !== "0.3.1" || strpos($psr, "2.") !== 0) {
             fwrite(STDERR, "expected rfc6455 0.3.1 and psr7 2.x\n");
             exit(1);
           }
         '
+
+    - name: Check runtime loading without deprecations
+      if: matrix.deps == 'modern'
+      run: php -d error_reporting=-1 tests/check-runtime-loading.php
 
     - name: Run unit test case
       run: composer unit

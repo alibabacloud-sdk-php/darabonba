@@ -10,8 +10,21 @@ use React\Socket\ConnectorInterface;
 
 class WebSocketConnector extends Connector
 {
-    public function __construct(LoopInterface $loop = null, ConnectorInterface $connector = null)
+    /**
+     * Untyped nullable arguments retain PHP 5.5 compatibility without the
+     * implicit-nullability deprecation introduced in PHP 8.4.
+     *
+     * @param LoopInterface|null      $loop
+     * @param ConnectorInterface|null $connector
+     */
+    public function __construct($loop = null, $connector = null)
     {
+        if ($loop !== null && !$loop instanceof LoopInterface) {
+            throw new \InvalidArgumentException('loop must implement LoopInterface');
+        }
+        if ($connector !== null && !$connector instanceof ConnectorInterface) {
+            throw new \InvalidArgumentException('connector must implement ConnectorInterface');
+        }
         $this->_loop = $loop ?: Loop::get();
 
         if (null === $connector) {
