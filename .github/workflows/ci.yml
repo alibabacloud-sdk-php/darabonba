@@ -58,6 +58,11 @@ jobs:
         # Composer 2.2 (PHP 5.6–7.1) only accepts --with for root requirements.
         # psr7 is transitive, so pin it by adding a root requirement in this checkout.
         if [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
+          # Composer ≥2.11 blocks all guzzlehttp/psr7 1.x via advisories; this
+          # matrix intentionally covers the legacy rfc6455 0.3.0 + psr7 1.x line.
+          composer config policy.advisories.block false 2>/dev/null \
+            || composer config audit.block-insecure false 2>/dev/null \
+            || true
           composer require --no-update --no-interaction \
             "ratchet/rfc6455:0.3.0" \
             "guzzlehttp/psr7:^1.7"

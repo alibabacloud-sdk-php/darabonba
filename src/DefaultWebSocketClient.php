@@ -116,7 +116,12 @@ class DefaultWebSocketClient implements WebSocketClientInterface
             : 10000;
 
         $this->loop = Factory::create();
-        $socketConnector = $this->buildSocketConnector($this->loop, $runtimeObject, $parsed, $request, $connectTimeout);
+        try {
+            $socketConnector = $this->buildSocketConnector($this->loop, $runtimeObject, $parsed, $request, $connectTimeout);
+        } catch (InvalidArgumentException $e) {
+            $this->state = self::STATE_DISCONNECTED;
+            throw $e;
+        }
         $connector = new WebSocketConnector($this->loop, $socketConnector);
 
         $headers = [];
@@ -271,12 +276,18 @@ class DefaultWebSocketClient implements WebSocketClientInterface
             $options['tls'] = $tlsOptions;
         }
 
-        $this->configureProxy($options, $parsed, $runtimeObject, $request);
+        if (Dara::isIpv4Only($runtimeObject)) {
+            // without happy eyeballs only A records are resolved; the IPv4 bind rejects IPv6 literals
+            $options['happy_eyeballs'] = false;
+            $options['tcp']['bindto'] = '0.0.0.0:0';
+        }
+
+        $this->configureProxy($options, $loop, $parsed, $runtimeObject);
 
         return new SocketConnector($loop, $options);
     }
 
-    private function configureProxy(&$options, $parsed, $runtimeObject, $request)
+    private function configureProxy(&$options, $loop, $parsed, $runtimeObject)
     {
         if (!empty($runtimeObject['socks5Proxy'])) {
             return;
@@ -300,18 +311,33 @@ class DefaultWebSocketClient implements WebSocketClientInterface
             $proxyURL = isset($runtimeObject['httpProxy']) ? $runtimeObject['httpProxy'] : null;
         }
 
-        if ($proxyURL !== null && $proxyURL !== '') {
-            $options['tcp']['proxy'] = $proxyURL;
-            $proxyParts = parse_url($proxyURL);
-            if (isset($proxyParts['user'])) {
-                $password = isset($proxyParts['pass']) ? $proxyParts['pass'] : '';
-                $auth = base64_encode($proxyParts['user'] . ':' . $password);
-                if ($request->headers === null) {
-                    $request->headers = [];
-                }
-                $request->headers['Proxy-Authorization'] = 'Basic ' . $auth;
-            }
+        if ($proxyURL === null || $proxyURL === '') {
+            return;
         }
+        if (Dara::isIpv4Only($runtimeObject) && filter_var(trim($host, '[]'), FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            throw new InvalidArgumentException('ipv4Only is enabled, refusing to connect to IPv6 address ' . $host);
+        }
+        $proxyConnectorOptions = ['timeout' => $options['timeout']];
+        if (Dara::isIpv4Only($runtimeObject)) {
+            // hop to the proxy is also an SDK Client connection: only A / only IPv4
+            $proxyURL = self::pinProxyUrlToIpv4($proxyURL);
+            $proxyConnectorOptions['happy_eyeballs'] = false;
+            $proxyConnectorOptions['tcp'] = ['bindto' => '0.0.0.0:0'];
+        }
+        $proxyConnector = new SocketConnector($loop, $proxyConnectorOptions);
+        $options['tcp'] = new HttpConnectProxyConnector($proxyURL, $proxyConnector);
+        $options['dns'] = false;
+        unset($options['happy_eyeballs']);
+    }
+
+    /**
+     * @param string $proxyUrl
+     *
+     * @return string
+     */
+    private static function pinProxyUrlToIpv4($proxyUrl)
+    {
+        return Dara::pinProxyUrlToIpv4($proxyUrl);
     }
 
     private function writeTempPem($content, $prefix)
