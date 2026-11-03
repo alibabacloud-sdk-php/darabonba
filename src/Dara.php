@@ -146,16 +146,103 @@ class Dara
     }
 
     /**
+     * Rewrite a proxy URL so the hop uses an IPv4 address (A record or IPv4 literal).
+     * IPv6-only proxy hosts fail. For https proxies the original hostname is kept in the
+     * query string so TLS SNI / peer_name still match after the authority is pinned to an IP.
+     *
+     * @param string $proxyUrl
+     *
+     * @return string
+     */
+    public static function pinProxyUrlToIpv4($proxyUrl)
+    {
+        $prefixed = false === strpos($proxyUrl, '://') ? 'http://' . $proxyUrl : $proxyUrl;
+        $parts = parse_url($prefixed);
+        if (false === $parts || !isset($parts['host'])) {
+            throw new \InvalidArgumentException('Invalid proxy URL: ' . $proxyUrl);
+        }
+        $originalHost = trim($parts['host'], '[]');
+        $host = $originalHost;
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            throw new \InvalidArgumentException('ipv4Only is enabled, refusing to connect to IPv6 proxy address ' . $parts['host']);
+        }
+        if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $ips = gethostbynamel($host);
+            if (false === $ips || empty($ips)) {
+                throw new \InvalidArgumentException(sprintf(
+                    "ipv4Only is enabled, could not resolve IPv4 address for proxy host '%s'",
+                    $host
+                ));
+            }
+            $host = $ips[0];
+        }
+        $auth = '';
+        if (isset($parts['user'])) {
+            $auth = $parts['user'];
+            if (isset($parts['pass'])) {
+                $auth .= ':' . $parts['pass'];
+            }
+            $auth .= '@';
+        }
+        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $path = isset($parts['path']) ? $parts['path'] : '';
+        $queryParams = [];
+        if (isset($parts['query']) && '' !== $parts['query']) {
+            parse_str($parts['query'], $queryParams);
+        }
+        $scheme = isset($parts['scheme']) ? strtolower($parts['scheme']) : 'http';
+        // Preserve original hostname for HTTPS proxy TLS after pinning authority to an IP
+        if ('https' === $scheme && $originalHost !== $host) {
+            $queryParams['hostname'] = $originalHost;
+        }
+        $query = empty($queryParams) ? '' : '?' . http_build_query($queryParams);
+        $schemePrefix = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
+
+        return $schemePrefix . $auth . $host . $port . $path . $query;
+    }
+
+    /**
+     * Pin every proxy URL in Guzzle options to IPv4 (string or http/https map).
+     *
+     * @return array
+     */
+    private static function pinProxyOptionsToIpv4(array $options)
+    {
+        if (!isset($options['proxy'])) {
+            return $options;
+        }
+        $proxy = $options['proxy'];
+        if (\is_string($proxy) && '' !== $proxy) {
+            $options['proxy'] = self::pinProxyUrlToIpv4($proxy);
+
+            return $options;
+        }
+        if (!\is_array($proxy)) {
+            return $options;
+        }
+        foreach (['http', 'https'] as $key) {
+            if (!empty($proxy[$key]) && \is_string($proxy[$key])) {
+                $proxy[$key] = self::pinProxyUrlToIpv4($proxy[$key]);
+            }
+        }
+        $options['proxy'] = $proxy;
+
+        return $options;
+    }
+
+    /**
      * Streaming requests go through Guzzle's StreamHandler, whose force_ip_resolve
      * looks the host up with dns_get_record(): that bypasses /etc/hosts and breaks on
      * hosts carrying a port. Resolve A records with the system resolver instead and
      * connect to the IPv4 literal, keeping the Host header and TLS peer name.
+     * Also applied on every redirect hop via ipv4OnlyStreamPinMiddleware.
      *
      * @return array [RequestInterface, array guzzle options]
      */
     private static function pinStreamToIpv4(RequestInterface $request, array $options)
     {
         unset($options[RequestOptions::FORCE_IP_RESOLVE]);
+        $options = self::pinProxyOptionsToIpv4($options);
         $uri = $request->getUri();
         // psr7 2.x keeps host/port separate; psr7 1.x may still embed "host:port" in getHost()
         $host = $uri->getHost();
@@ -192,6 +279,24 @@ class Dara
         }
 
         return [$request->withUri($uri, true), $options];
+    }
+
+    /**
+     * Runs beneath RedirectMiddleware so every hop (including redirects) is pinned.
+     *
+     * @return callable
+     */
+    private static function ipv4OnlyStreamPinMiddleware()
+    {
+        return function (callable $handler) {
+            return function (RequestInterface $request, array $options) use ($handler) {
+                if (!empty($options['_dara_ipv4_only']) && !empty($options[RequestOptions::STREAM])) {
+                    list($request, $options) = self::pinStreamToIpv4($request, $options);
+                }
+
+                return $handler($request, $options);
+            };
+        };
     }
 
     /**
@@ -236,6 +341,9 @@ class Dara
     private static function createHandler()
     {
         $stack = HandlerStack::create();
+        // push (not unshift): last-pushed is innermost, so RedirectMiddleware re-enters this
+        // on every hop and stream+ipv4Only pinning applies to redirect targets too
+        $stack->push(self::ipv4OnlyStreamPinMiddleware(), 'dara_ipv4_stream_pin');
         $stack->push(Middleware::mapResponse(static function (ResponseInterface $response) {
             return new Response($response);
         }));
@@ -541,6 +649,7 @@ class Dara
         if (self::isIpv4Only($config)) {
             // curl handler maps this to CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
             $options->set(RequestOptions::FORCE_IP_RESOLVE, 'v4');
+            $options->set('_dara_ipv4_only', true);
         }
         // readTimeout&connectTimeout unit is millisecond
         $read_timeout = isset($config['readTimeout']) && !empty($config['readTimeout']) ? (int) $config['readTimeout'] : 3000;
@@ -548,6 +657,12 @@ class Dara
         // timeout unit is second
         $options->set('timeout', ($read_timeout + $con_timeout) / 1000);
 
-        return $options->all();
+        $resolved = $options->all();
+        if (self::isIpv4Only($config)) {
+            // proxy hop is also an SDK Client connection: only A / only IPv4
+            $resolved = self::pinProxyOptionsToIpv4($resolved);
+        }
+
+        return $resolved;
     }
 }

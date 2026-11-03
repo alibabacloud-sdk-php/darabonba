@@ -254,16 +254,17 @@ class Ipv4OnlyTest extends TestCase
         self::assertSame('localhost', $options['stream_context']['ssl']['peer_name']);
         self::assertArrayNotHasKey('force_ip_resolve', $options);
 
-        // IPv4 literals and proxied requests are left alone
+        // IPv4 literals and proxied requests are left alone (proxy hop is pinned to IPv4)
         Dara::send($this->hostHeaderRequest('127.0.0.1:80'), ['ipv4Only' => true, 'stream' => true]);
         Dara::send($this->hostHeaderRequest('localhost'), [
             'ipv4Only' => true,
             'stream' => true,
-            'httpProxy' => 'http://proxy.test:3128',
+            'httpProxy' => 'http://127.0.0.1:3128',
         ]);
         // http:80 is the default port → getPort() may be null on psr7 2.x
         self::assertSame('127.0.0.1', $this->uriHostOnly($captured[1][0]->getUri()));
         self::assertSame('localhost', $this->uriHostOnly($captured[2][0]->getUri()));
+        self::assertSame('http://127.0.0.1:3128', $captured[2][1]['proxy']['http']);
         self::assertArrayNotHasKey('stream_context', $captured[2][1]);
         self::assertArrayNotHasKey('force_ip_resolve', $captured[2][1]);
 
@@ -271,6 +272,77 @@ class Ipv4OnlyTest extends TestCase
         Dara::send($this->hostHeaderRequest('localhost'), ['ipv4Only' => true]);
         self::assertSame('localhost', $this->uriHostOnly($captured[3][0]->getUri()));
         self::assertSame('v4', $captured[3][1]['force_ip_resolve']);
+    }
+
+    public function testStreamIpv4OnlyRejectsIpv6Proxy()
+    {
+        try {
+            Dara::send($this->hostHeaderRequest('127.0.0.1:80'), [
+                'ipv4Only' => true,
+                'stream' => true,
+                'httpProxy' => 'http://[::1]:8080',
+            ]);
+            self::fail('ipv4Only must reject an IPv6-only HTTP proxy on stream requests');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('refusing to connect to IPv6 proxy address', $e->getMessage());
+        }
+    }
+
+    public function testStreamIpv4OnlyPinsRedirectHops()
+    {
+        $v6Port = $this->startHttpServer('[::1]');
+        $v4Port = $this->freePort('127.0.0.1');
+        $redirectScript = tempnam(sys_get_temp_dir(), 'dara-redir-');
+        file_put_contents($redirectScript, "<?php\nheader('Location: http://[::1]:{$v6Port}/');\nhttp_response_code(302);\n");
+        $this->spawn(sprintf(
+            '%s -S %s %s',
+            escapeshellarg($this->phpCli()),
+            escapeshellarg('127.0.0.1:' . $v4Port),
+            escapeshellarg($redirectScript)
+        ), '127.0.0.1', $v4Port);
+
+        try {
+            Dara::send($this->localRequest($v4Port), [
+                'ipv4Only' => true,
+                'stream' => true,
+                'connectTimeout' => 2000,
+            ]);
+            self::fail('ipv4Only stream request must not follow redirect to an IPv6 literal');
+        } catch (ConnectException $e) {
+            self::assertStringHas('refusing to connect to IPv6 address ::1', $e->getMessage());
+        }
+    }
+
+    public function testHttpConnectProxyConnectorHonorsHttpsScheme()
+    {
+        $inner = new \React\Socket\Connector(\React\EventLoop\Factory::create());
+        $prop = new \ReflectionProperty(HttpConnectProxyConnector::class, 'proxyAddress');
+        $prop->setAccessible(true);
+
+        $http = new HttpConnectProxyConnector('http://user:p%40ss@proxy.example', $inner);
+        self::assertSame('tcp://proxy.example:80', $prop->getValue($http));
+
+        $httpPort = new HttpConnectProxyConnector('http://proxy.example:8080', $inner);
+        self::assertSame('tcp://proxy.example:8080', $prop->getValue($httpPort));
+
+        $https = new HttpConnectProxyConnector('https://user:p%40ss@proxy.example', $inner);
+        self::assertSame('tls://proxy.example:443', $prop->getValue($https));
+
+        $httpsPort = new HttpConnectProxyConnector('https://proxy.example:8443', $inner);
+        self::assertSame('tls://proxy.example:8443', $prop->getValue($httpsPort));
+
+        $pinned = new HttpConnectProxyConnector(
+            'https://user:pass@127.0.0.1:8443?hostname=proxy.example',
+            $inner
+        );
+        self::assertSame('tls://127.0.0.1:8443?hostname=proxy.example', $prop->getValue($pinned));
+
+        try {
+            new HttpConnectProxyConnector('socks5://proxy.example:1080', $inner);
+            self::fail('expected unsupported proxy scheme');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('Unsupported proxy scheme', $e->getMessage());
+        }
     }
 
     public function testUsesProxy()
@@ -347,6 +419,8 @@ class Ipv4OnlyTest extends TestCase
         self::assertSame('http://127.0.0.1:1', $method->invoke(null, '127.0.0.1:1'));
         $pinned = $method->invoke(null, 'http://localhost:8080/path?x=1');
         self::assertStringStartsWith('http://127.0.0.1:8080/path?x=1', $pinned);
+        $httpsPinned = Dara::pinProxyUrlToIpv4('https://localhost:8443');
+        self::assertSame('https://127.0.0.1:8443?hostname=localhost', $httpsPinned);
         try {
             $method->invoke(null, 'http://[::1]:8080');
             self::fail('expected IPv6 proxy host to be rejected');

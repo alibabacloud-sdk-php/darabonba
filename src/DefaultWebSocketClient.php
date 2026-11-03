@@ -331,48 +331,13 @@ class DefaultWebSocketClient implements WebSocketClientInterface
     }
 
     /**
-     * Rewrite a proxy URL so the hop uses an IPv4 address (A record or IPv4 literal).
-     * IPv6-only proxy hosts fail; the proxy still resolves the WebSocket target itself.
-     *
      * @param string $proxyUrl
      *
      * @return string
      */
     private static function pinProxyUrlToIpv4($proxyUrl)
     {
-        $prefixed = false === strpos($proxyUrl, '://') ? 'http://' . $proxyUrl : $proxyUrl;
-        $parts = parse_url($prefixed);
-        if (false === $parts || !isset($parts['host'])) {
-            throw new InvalidArgumentException('Invalid proxy URL: ' . $proxyUrl);
-        }
-        $host = trim($parts['host'], '[]');
-        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            throw new InvalidArgumentException('ipv4Only is enabled, refusing to connect to IPv6 proxy address ' . $parts['host']);
-        }
-        if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ips = gethostbynamel($host);
-            if (false === $ips || empty($ips)) {
-                throw new InvalidArgumentException(sprintf(
-                    "ipv4Only is enabled, could not resolve IPv4 address for proxy host '%s'",
-                    $host
-                ));
-            }
-            $host = $ips[0];
-        }
-        $auth = '';
-        if (isset($parts['user'])) {
-            $auth = $parts['user'];
-            if (isset($parts['pass'])) {
-                $auth .= ':' . $parts['pass'];
-            }
-            $auth .= '@';
-        }
-        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
-        $path = isset($parts['path']) ? $parts['path'] : '';
-        $query = isset($parts['query']) ? '?' . $parts['query'] : '';
-        $scheme = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
-
-        return $scheme . $auth . $host . $port . $path . $query;
+        return Dara::pinProxyUrlToIpv4($proxyUrl);
     }
 
     private function writeTempPem($content, $prefix)
