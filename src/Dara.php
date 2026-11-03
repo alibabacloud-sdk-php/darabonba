@@ -9,7 +9,6 @@ use AlibabaCloud\Dara\RetryPolicy\RetryPolicyContext;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
-use GuzzleHttp\Handler\CurlHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\RequestOptions;
 use GuzzleHttp\Middleware;
@@ -278,15 +277,17 @@ class Dara
     }
 
     /**
-     * ipv4Only for Guzzle/cURL: keep logical request URI and proxy hostnames so
-     * redirects preserve Host/Authorization and HTTPS proxy certs still match.
-     * Address-family forcing is CURLOPT_IPRESOLVE=V4 (force_ip_resolve). Reject
-     * IPv6 literals on the target and on the selected proxy hop.
-     * Applied on every redirect hop via ipv4OnlyStreamPinMiddleware when stream=true.
+     * ipv4Only constraints: reject IPv6 literals on the target and selected proxy.
+     * Non-stream traffic keeps the logical URI and relies on CURLOPT_IPRESOLVE=V4.
+     * Stream traffic is pinned to an A record only when $forHandler is true (inside
+     * the handler middleware, beneath RedirectMiddleware) so same-origin redirects
+     * still see the logical host for Host/Authorization.
+     *
+     * @param bool $forHandler pin stream URI for the transport handler only
      *
      * @return array [RequestInterface, array guzzle options]
      */
-    private static function applyIpv4OnlyConstraints(RequestInterface $request, array $options)
+    private static function applyIpv4OnlyConstraints(RequestInterface $request, array $options, $forHandler = false)
     {
         $uri = $request->getUri();
         list($host) = self::splitUriHostPort($uri->getHost(), $uri->getPort());
@@ -297,11 +298,51 @@ class Dara
 
         $options = self::enforceSelectedProxyIpv4($options, $uri->getScheme(), $host);
 
+        if ($forHandler && !empty($options[RequestOptions::STREAM])) {
+            return self::pinStreamToIpv4($request, $options);
+        }
+
         return [$request, $options];
     }
 
     /**
-     * Runs beneath RedirectMiddleware so every hop rejects IPv6 literals under ipv4Only.
+     * Streaming requests go through Guzzle's StreamHandler. Its force_ip_resolve uses
+     * dns_get_record() (skips /etc/hosts, breaks host:port). Resolve A records with
+     * gethostbynamel and connect to the IPv4 literal while keeping the Host header
+     * and TLS peer_name. Must run beneath RedirectMiddleware so the outer request
+     * URI stays logical (absolute same-host redirects keep Authorization).
+     *
+     * @return array [RequestInterface, array guzzle options]
+     */
+    private static function pinStreamToIpv4(RequestInterface $request, array $options)
+    {
+        unset($options[RequestOptions::FORCE_IP_RESOLVE]);
+        $uri = $request->getUri();
+        list($host, $port) = self::splitUriHostPort($uri->getHost(), $uri->getPort());
+
+        // IPv6 literals are rejected in applyIpv4OnlyConstraints before this runs.
+        // Proxy resolves the target itself; IPv4 literals need no pin.
+        if (filter_var($host, FILTER_VALIDATE_IP) || self::usesProxy($uri->getScheme(), $host, $options)) {
+            return [$request, $options];
+        }
+
+        $ips = gethostbynamel($host);
+        if (false === $ips || empty($ips)) {
+            throw new ConnectException(sprintf("ipv4Only is enabled, could not resolve IPv4 address for host '%s'", $host), $request);
+        }
+        $options['stream_context']['ssl']['peer_name'] = $host;
+
+        $uri = $uri->withHost($ips[0]);
+        if (null !== $port) {
+            $uri = $uri->withPort($port);
+        }
+
+        return [$request->withUri($uri, true), $options];
+    }
+
+    /**
+     * Runs beneath RedirectMiddleware: reject IPv6 literals on every hop, and pin
+     * stream=true requests to IPv4 without changing the RedirectMiddleware URI.
      *
      * @return callable
      */
@@ -310,7 +351,7 @@ class Dara
         return function (callable $handler) {
             return function (RequestInterface $request, array $options) use ($handler) {
                 if (!empty($options['_dara_ipv4_only'])) {
-                    list($request, $options) = self::applyIpv4OnlyConstraints($request, $options);
+                    list($request, $options) = self::applyIpv4OnlyConstraints($request, $options, true);
                 }
 
                 return $handler($request, $options);
@@ -370,19 +411,18 @@ class Dara
     }
 
     /**
-     * ipv4Only handler: always CurlHandler (ext-curl is required). Guzzle's default
-     * stack routes stream=true to StreamHandler, whose force_ip_resolve uses
-     * dns_get_record (breaks host:port / etc/hosts). Rewriting the URI to an IP to
-     * work around that breaks redirect Host/Authorization. CurlHandler honors
-     * CURLOPT_IPRESOLVE=V4 with the logical URI and proxy hostname intact.
+     * ipv4Only handler: Guzzle's default choose_handler (CurlMulti for async,
+     * CurlHandler for sync, StreamHandler when stream=true) so sendAsync and SSE
+     * keep their timing. Middleware beneath RedirectMiddleware rejects IPv6
+     * literals and pins stream URIs to A records without breaking redirect Auth.
      *
      * @return HandlerStack
      */
     private static function createIpv4OnlyHandler()
     {
-        $stack = HandlerStack::create(new CurlHandler());
+        $stack = HandlerStack::create();
         // push (not unshift): last-pushed is innermost, so RedirectMiddleware re-enters this
-        // on every hop and IPv6-literal rejection applies to redirect targets too
+        // on every hop and IPv6-literal rejection / stream pin applies to redirect targets too
         $stack->push(self::ipv4OnlyStreamPinMiddleware(), 'dara_ipv4_stream_pin');
         $stack->push(Middleware::mapResponse(static function (ResponseInterface $response) {
             return new Response($response);

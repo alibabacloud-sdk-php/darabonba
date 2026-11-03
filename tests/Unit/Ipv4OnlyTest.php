@@ -241,8 +241,121 @@ class Ipv4OnlyTest extends TestCase
             Dara::send($this->hostHeaderRequest('ipv4only-nonexistent.invalid'), $runtime);
             self::fail('unresolvable host must fail');
         } catch (ConnectException $e) {
-            // cURL + CURLOPT_IPRESOLVE=V4; logical URI is not rewritten
-            self::assertTrue(true);
+            // stream pin uses gethostbynamel; unresolvable hosts fail before connect
+            self::assertStringHas('could not resolve IPv4 address', $e->getMessage());
+        }
+    }
+
+    public function testIpv4OnlyStreamReturnsBeforeBodyCompletes()
+    {
+        $port = $this->startHttpServer('127.0.0.1');
+        $request = $this->localRequest($port);
+        $request->pathname = '/sse-slow';
+
+        $start = microtime(true);
+        $res = Dara::send($request, [
+            'ipv4Only' => true,
+            'stream' => true,
+            'connectTimeout' => 2000,
+            'readTimeout' => 5000,
+        ]);
+        $elapsed = microtime(true) - $start;
+        self::assertLessThan(
+            0.8,
+            $elapsed,
+            sprintf('stream=true must return after headers/first event, not after full body (%.3fs)', $elapsed)
+        );
+        self::assertSame(200, $res->getStatusCode());
+        self::assertStringHas('data: hello', $res->getBody()->read(64));
+    }
+
+    public function testIpv4OnlySendAsyncReturnsPromiseBeforeCompletion()
+    {
+        $port = $this->startHttpServer('127.0.0.1');
+        $request = $this->localRequest($port);
+        $request->pathname = '/sse-slow';
+
+        $start = microtime(true);
+        $promise = Dara::sendAsync($request, [
+            'ipv4Only' => true,
+            'connectTimeout' => 2000,
+            'readTimeout' => 5000,
+        ]);
+        $elapsed = microtime(true) - $start;
+        self::assertLessThan(
+            0.8,
+            $elapsed,
+            sprintf('sendAsync must return a Promise before the body finishes (%.3fs)', $elapsed)
+        );
+        $res = $promise->wait();
+        self::assertSame(200, $res->getStatusCode());
+        self::assertStringHas('data: hello', (string) $res->getBody());
+    }
+
+    public function testPinStreamToIpv4SkipsLiteralAndProxiedHosts()
+    {
+        $pin = new \ReflectionMethod(Dara::class, 'pinStreamToIpv4');
+        $pin->setAccessible(true);
+
+        $literal = new PsrRequest('GET', 'http://127.0.0.1:8080/');
+        list($out, $opts) = $pin->invoke(null, $literal, ['stream' => true, 'force_ip_resolve' => 'v4']);
+        self::assertSame($literal, $out);
+        self::assertArrayNotHasKey('force_ip_resolve', $opts);
+
+        $proxied = new PsrRequest('GET', 'http://api.example/');
+        list($out2, $opts2) = $pin->invoke(null, $proxied, [
+            'stream' => true,
+            'force_ip_resolve' => 'v4',
+            'proxy' => ['http' => 'http://127.0.0.1:3128'],
+        ]);
+        self::assertSame('api.example', $out2->getUri()->getHost());
+        self::assertArrayNotHasKey('force_ip_resolve', $opts2);
+        self::assertArrayNotHasKey('stream_context', $opts2);
+    }
+
+    public function testIpv4OnlyStreamPinBeneathRedirectKeepsAuthorization()
+    {
+        // Transport sees pinned IPv4; RedirectMiddleware still uses logical host so
+        // absolute same-host Location keeps Authorization.
+        $transport = [];
+        $mock = new \GuzzleHttp\Handler\MockHandler([
+            new PsrResponse(302, ['Location' => 'http://localhost/final']),
+            new PsrResponse(200, [], 'ok'),
+        ]);
+        $capturing = function ($request, array $options) use ($mock, &$transport) {
+            $transport[] = [
+                'host' => self::uriHostOnlyStatic($request->getUri()),
+                'auth' => $request->getHeaderLine('Authorization'),
+                'peer' => isset($options['stream_context']['ssl']['peer_name'])
+                    ? $options['stream_context']['ssl']['peer_name']
+                    : null,
+            ];
+
+            return $mock($request, $options);
+        };
+        $stack = HandlerStack::create($capturing);
+        $pin = new \ReflectionMethod(Dara::class, 'ipv4OnlyStreamPinMiddleware');
+        $pin->setAccessible(true);
+        $stack->push($pin->invoke(null), 'dara_ipv4_stream_pin');
+        Dara::config(['handler' => $stack]);
+
+        $request = new Request();
+        $request->method = 'GET';
+        $request->protocol = 'http';
+        $request->headers['host'] = 'localhost';
+        $request->pathname = '/';
+        $request->headers['Authorization'] = 'Bearer keep-me';
+        $res = Dara::send($request, [
+            'ipv4Only' => true,
+            'stream' => true,
+            'connectTimeout' => 2000,
+        ]);
+        self::assertSame(200, $res->getStatusCode());
+        self::assertCount(2, $transport);
+        foreach ($transport as $hop) {
+            self::assertSame('127.0.0.1', $hop['host'], 'handler must dial IPv4 literal');
+            self::assertSame('Bearer keep-me', $hop['auth']);
+            self::assertSame('localhost', $hop['peer']);
         }
     }
 
@@ -259,7 +372,8 @@ class Ipv4OnlyTest extends TestCase
         $https->protocol = 'https';
         Dara::send($https, ['ipv4Only' => true, 'stream' => true]);
         list($request, $options) = $captured[0];
-        // Logical URI must stay (redirect Host/Authorization depend on it); cURL uses force_ip_resolve
+        // Without our pin middleware (custom handler), prepare keeps the logical URI
+        // and force_ip_resolve; RedirectMiddleware therefore still sees the hostname.
         self::assertUriHostPort($request->getUri(), 'localhost', 8443);
         self::assertSame('localhost:8443', $request->getHeaderLine('Host'));
         self::assertSame('v4', $options['force_ip_resolve']);
