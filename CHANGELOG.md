@@ -2,14 +2,10 @@
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-11-03
+
 ### Added
-- WebSocket protocol support (align golang tea): client, handler, connector, session util, RuntimeOptions fields
-- Unit tests for WebSocket with local mock server
-
-### Fixed
-- StreamTest no longer depends on flaky external httpbin/network
-- Feature RequestTest skips on external network failures
-
+- Support `ipv4Only` option to restrict SDK HTTP connections to IPv4 only (A/AAAA pin, proxy hop included)
 
 ## [1.0.4] - 2025-12-15
 
