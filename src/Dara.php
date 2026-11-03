@@ -9,6 +9,7 @@ use AlibabaCloud\Dara\RetryPolicy\RetryPolicyContext;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Handler\CurlHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\RequestOptions;
 use GuzzleHttp\Middleware;
@@ -138,8 +139,8 @@ class Dara
     private static function prepare(RequestInterface $request, array $runtime)
     {
         $options = self::resolveConfig($runtime);
-        if (self::isIpv4Only($runtime) && !empty($options[RequestOptions::STREAM])) {
-            return self::pinStreamToIpv4($request, $options);
+        if (self::isIpv4Only($runtime)) {
+            return self::applyIpv4OnlyConstraints($request, $options);
         }
 
         return [$request, $options];
@@ -147,8 +148,10 @@ class Dara
 
     /**
      * Rewrite a proxy URL so the hop uses an IPv4 address (A record or IPv4 literal).
-     * IPv6-only proxy hosts fail. For https proxies the original hostname is kept in the
-     * query string so TLS SNI / peer_name still match after the authority is pinned to an IP.
+     * Used by the React/WebSocket connector only. For https proxies the original hostname
+     * is kept in ?hostname= so SNI / peer_name still match after the authority is pinned.
+     * Guzzle/cURL must NOT use this — libcurl ignores ?hostname= for cert verification;
+     * keep the logical proxy hostname and rely on CURLOPT_IPRESOLVE=V4 instead.
      *
      * @param string $proxyUrl
      *
@@ -202,51 +205,15 @@ class Dara
     }
 
     /**
-     * Pin every proxy URL in Guzzle options to IPv4 (string or http/https map).
+     * Extract the bare host from a URI host (psr7 1.x may embed "host:port").
      *
-     * @return array
-     */
-    private static function pinProxyOptionsToIpv4(array $options)
-    {
-        if (!isset($options['proxy'])) {
-            return $options;
-        }
-        $proxy = $options['proxy'];
-        if (\is_string($proxy) && '' !== $proxy) {
-            $options['proxy'] = self::pinProxyUrlToIpv4($proxy);
-
-            return $options;
-        }
-        if (!\is_array($proxy)) {
-            return $options;
-        }
-        foreach (['http', 'https'] as $key) {
-            if (!empty($proxy[$key]) && \is_string($proxy[$key])) {
-                $proxy[$key] = self::pinProxyUrlToIpv4($proxy[$key]);
-            }
-        }
-        $options['proxy'] = $proxy;
-
-        return $options;
-    }
-
-    /**
-     * Streaming requests go through Guzzle's StreamHandler, whose force_ip_resolve
-     * looks the host up with dns_get_record(): that bypasses /etc/hosts and breaks on
-     * hosts carrying a port. Resolve A records with the system resolver instead and
-     * connect to the IPv4 literal, keeping the Host header and TLS peer name.
-     * Also applied on every redirect hop via ipv4OnlyStreamPinMiddleware.
+     * @param string   $host
+     * @param null|int $port
      *
-     * @return array [RequestInterface, array guzzle options]
+     * @return array{0: string, 1: null|int}
      */
-    private static function pinStreamToIpv4(RequestInterface $request, array $options)
+    private static function splitUriHostPort($host, $port = null)
     {
-        unset($options[RequestOptions::FORCE_IP_RESOLVE]);
-        $options = self::pinProxyOptionsToIpv4($options);
-        $uri = $request->getUri();
-        // psr7 2.x keeps host/port separate; psr7 1.x may still embed "host:port" in getHost()
-        $host = $uri->getHost();
-        $port = $uri->getPort();
         if (preg_match('/^\[([^\]]*)\](?::(\d+))?$/', $host, $m)) {
             $host = $m[1];
             if (null === $port && isset($m[2]) && '' !== $m[2]) {
@@ -259,30 +226,82 @@ class Dara
             }
         }
 
-        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            throw new ConnectException(sprintf('ipv4Only is enabled, refusing to connect to IPv6 address %s', $host), $request);
-        }
-        // the proxy resolves the target itself
-        if (filter_var($host, FILTER_VALIDATE_IP) || self::usesProxy($uri->getScheme(), $host, $options)) {
-            return [$request, $options];
-        }
-
-        $ips = gethostbynamel($host);
-        if (false === $ips || empty($ips)) {
-            throw new ConnectException(sprintf("ipv4Only is enabled, could not resolve IPv4 address for host '%s'", $host), $request);
-        }
-        $options['stream_context']['ssl']['peer_name'] = $host;
-
-        $uri = $uri->withHost($ips[0]);
-        if (null !== $port) {
-            $uri = $uri->withPort($port);
-        }
-
-        return [$request->withUri($uri, true), $options];
+        return [$host, $port];
     }
 
     /**
-     * Runs beneath RedirectMiddleware so every hop (including redirects) is pinned.
+     * Reject an IPv6-literal proxy URL. Does not rewrite hostnames — cURL keeps the
+     * logical name and forces A records via CURLOPT_IPRESOLVE.
+     *
+     * @param string $proxyUrl
+     */
+    private static function assertProxyHostNotIpv6Literal($proxyUrl)
+    {
+        $prefixed = false === strpos($proxyUrl, '://') ? 'http://' . $proxyUrl : $proxyUrl;
+        $parts = parse_url($prefixed);
+        if (false === $parts || !isset($parts['host'])) {
+            throw new \InvalidArgumentException('Invalid proxy URL: ' . $proxyUrl);
+        }
+        $host = trim($parts['host'], '[]');
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            throw new \InvalidArgumentException('ipv4Only is enabled, refusing to connect to IPv6 proxy address ' . $parts['host']);
+        }
+    }
+
+    /**
+     * Only touch the proxy that this request will actually use (scheme + noProxy).
+     * Unused http/https entries are left alone so an unresolvable unused proxy cannot
+     * fail the request. cURL paths keep the logical hostname for TLS verification.
+     *
+     * @param string $scheme
+     * @param string $host
+     *
+     * @return array
+     */
+    private static function enforceSelectedProxyIpv4(array $options, $scheme, $host)
+    {
+        if (!isset($options['proxy']) || !self::usesProxy($scheme, $host, $options)) {
+            return $options;
+        }
+        $proxy = $options['proxy'];
+        if (\is_string($proxy) && '' !== $proxy) {
+            self::assertProxyHostNotIpv6Literal($proxy);
+
+            return $options;
+        }
+        if (!\is_array($proxy) || empty($proxy[$scheme]) || !\is_string($proxy[$scheme])) {
+            return $options;
+        }
+        self::assertProxyHostNotIpv6Literal($proxy[$scheme]);
+
+        return $options;
+    }
+
+    /**
+     * ipv4Only for Guzzle/cURL: keep logical request URI and proxy hostnames so
+     * redirects preserve Host/Authorization and HTTPS proxy certs still match.
+     * Address-family forcing is CURLOPT_IPRESOLVE=V4 (force_ip_resolve). Reject
+     * IPv6 literals on the target and on the selected proxy hop.
+     * Applied on every redirect hop via ipv4OnlyStreamPinMiddleware when stream=true.
+     *
+     * @return array [RequestInterface, array guzzle options]
+     */
+    private static function applyIpv4OnlyConstraints(RequestInterface $request, array $options)
+    {
+        $uri = $request->getUri();
+        list($host) = self::splitUriHostPort($uri->getHost(), $uri->getPort());
+
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            throw new ConnectException(sprintf('ipv4Only is enabled, refusing to connect to IPv6 address %s', $host), $request);
+        }
+
+        $options = self::enforceSelectedProxyIpv4($options, $uri->getScheme(), $host);
+
+        return [$request, $options];
+    }
+
+    /**
+     * Runs beneath RedirectMiddleware so every hop rejects IPv6 literals under ipv4Only.
      *
      * @return callable
      */
@@ -290,8 +309,8 @@ class Dara
     {
         return function (callable $handler) {
             return function (RequestInterface $request, array $options) use ($handler) {
-                if (!empty($options['_dara_ipv4_only']) && !empty($options[RequestOptions::STREAM])) {
-                    list($request, $options) = self::pinStreamToIpv4($request, $options);
+                if (!empty($options['_dara_ipv4_only'])) {
+                    list($request, $options) = self::applyIpv4OnlyConstraints($request, $options);
                 }
 
                 return $handler($request, $options);
@@ -336,13 +355,34 @@ class Dara
     }
 
     /**
+     * Dual-stack default handler (Guzzle choose_handler, may wrap StreamHandler for stream=true).
+     *
      * @return HandlerStack
      */
     private static function createHandler()
     {
         $stack = HandlerStack::create();
+        $stack->push(Middleware::mapResponse(static function (ResponseInterface $response) {
+            return new Response($response);
+        }));
+
+        return $stack;
+    }
+
+    /**
+     * ipv4Only handler: always CurlHandler (ext-curl is required). Guzzle's default
+     * stack routes stream=true to StreamHandler, whose force_ip_resolve uses
+     * dns_get_record (breaks host:port / etc/hosts). Rewriting the URI to an IP to
+     * work around that breaks redirect Host/Authorization. CurlHandler honors
+     * CURLOPT_IPRESOLVE=V4 with the logical URI and proxy hostname intact.
+     *
+     * @return HandlerStack
+     */
+    private static function createIpv4OnlyHandler()
+    {
+        $stack = HandlerStack::create(new CurlHandler());
         // push (not unshift): last-pushed is innermost, so RedirectMiddleware re-enters this
-        // on every hop and stream+ipv4Only pinning applies to redirect targets too
+        // on every hop and IPv6-literal rejection applies to redirect targets too
         $stack->push(self::ipv4OnlyStreamPinMiddleware(), 'dara_ipv4_stream_pin');
         $stack->push(Middleware::mapResponse(static function (ResponseInterface $response) {
             return new Response($response);
@@ -362,7 +402,7 @@ class Dara
             return $client;
         }
         if (null === self::$ipv4OnlyHandler) {
-            self::$ipv4OnlyHandler = self::createHandler();
+            self::$ipv4OnlyHandler = self::createIpv4OnlyHandler();
         }
 
         return self::client(['handler' => self::$ipv4OnlyHandler]);
@@ -657,12 +697,10 @@ class Dara
         // timeout unit is second
         $options->set('timeout', ($read_timeout + $con_timeout) / 1000);
 
-        $resolved = $options->all();
-        if (self::isIpv4Only($config)) {
-            // proxy hop is also an SDK Client connection: only A / only IPv4
-            $resolved = self::pinProxyOptionsToIpv4($resolved);
-        }
-
-        return $resolved;
+        // cURL: CURLOPT_IPRESOLVE=V4 covers target + selected proxy DNS.
+        // Do not rewrite proxy hostnames to IPs here — that breaks HTTPS proxy cert
+        // verification (libcurl ignores ?hostname=) and would also resolve unused
+        // proxies before noProxy/scheme selection. WebSocket uses pinProxyUrlToIpv4.
+        return $options->all();
     }
 }

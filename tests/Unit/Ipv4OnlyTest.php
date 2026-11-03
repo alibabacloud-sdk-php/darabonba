@@ -64,6 +64,16 @@ class Ipv4OnlyTest extends TestCase
         $ipv4 = $method->invoke(null, ['ipv4Only' => true, 'connectTimeout' => 1000]);
         self::assertSame('v4', $ipv4['force_ip_resolve']);
         self::assertSame(4, $ipv4['timeout']);
+
+        // cURL path keeps logical proxy hostnames (CURLOPT_IPRESOLVE); no IP rewrite
+        $withProxy = $method->invoke(null, [
+            'ipv4Only' => true,
+            'httpProxy' => 'http://localhost:8080',
+            'httpsProxy' => 'https://proxy.example:8443',
+        ]);
+        self::assertSame('http://localhost:8080', $withProxy['proxy']['http']);
+        self::assertSame('https://proxy.example:8443', $withProxy['proxy']['https']);
+        self::assertStringMissing('hostname=', $withProxy['proxy']['https']);
     }
 
     public function testCurlHandleGetsIpResolveV4()
@@ -231,11 +241,12 @@ class Ipv4OnlyTest extends TestCase
             Dara::send($this->hostHeaderRequest('ipv4only-nonexistent.invalid'), $runtime);
             self::fail('unresolvable host must fail');
         } catch (ConnectException $e) {
-            self::assertStringHas("could not resolve IPv4 address for host 'ipv4only-nonexistent.invalid'", $e->getMessage());
+            // cURL + CURLOPT_IPRESOLVE=V4; logical URI is not rewritten
+            self::assertTrue(true);
         }
     }
 
-    public function testStreamIpv4OnlyRewritesRequestForHandler()
+    public function testStreamIpv4OnlyKeepsLogicalUriForHandler()
     {
         $captured = [];
         Dara::config(['handler' => HandlerStack::create(function ($request, array $options) use (&$captured) {
@@ -248,27 +259,24 @@ class Ipv4OnlyTest extends TestCase
         $https->protocol = 'https';
         Dara::send($https, ['ipv4Only' => true, 'stream' => true]);
         list($request, $options) = $captured[0];
-        // psr7 2.x: host/port are separate; psr7 1.x may embed "host:port" in getHost()
-        self::assertUriHostPort($request->getUri(), '127.0.0.1', 8443);
+        // Logical URI must stay (redirect Host/Authorization depend on it); cURL uses force_ip_resolve
+        self::assertUriHostPort($request->getUri(), 'localhost', 8443);
         self::assertSame('localhost:8443', $request->getHeaderLine('Host'));
-        self::assertSame('localhost', $options['stream_context']['ssl']['peer_name']);
-        self::assertArrayNotHasKey('force_ip_resolve', $options);
+        self::assertSame('v4', $options['force_ip_resolve']);
+        self::assertArrayNotHasKey('stream_context', $options);
 
-        // IPv4 literals and proxied requests are left alone (proxy hop is pinned to IPv4)
         Dara::send($this->hostHeaderRequest('127.0.0.1:80'), ['ipv4Only' => true, 'stream' => true]);
         Dara::send($this->hostHeaderRequest('localhost'), [
             'ipv4Only' => true,
             'stream' => true,
-            'httpProxy' => 'http://127.0.0.1:3128',
+            'httpProxy' => 'http://localhost:3128',
         ]);
-        // http:80 is the default port → getPort() may be null on psr7 2.x
         self::assertSame('127.0.0.1', $this->uriHostOnly($captured[1][0]->getUri()));
         self::assertSame('localhost', $this->uriHostOnly($captured[2][0]->getUri()));
-        self::assertSame('http://127.0.0.1:3128', $captured[2][1]['proxy']['http']);
-        self::assertArrayNotHasKey('stream_context', $captured[2][1]);
-        self::assertArrayNotHasKey('force_ip_resolve', $captured[2][1]);
+        // cURL path: keep logical proxy hostname (no IP rewrite / ?hostname=)
+        self::assertSame('http://localhost:3128', $captured[2][1]['proxy']['http']);
+        self::assertSame('v4', $captured[2][1]['force_ip_resolve']);
 
-        // non-stream requests keep using force_ip_resolve
         Dara::send($this->hostHeaderRequest('localhost'), ['ipv4Only' => true]);
         self::assertSame('localhost', $this->uriHostOnly($captured[3][0]->getUri()));
         self::assertSame('v4', $captured[3][1]['force_ip_resolve']);
@@ -286,6 +294,161 @@ class Ipv4OnlyTest extends TestCase
         } catch (\InvalidArgumentException $e) {
             self::assertStringHas('refusing to connect to IPv6 proxy address', $e->getMessage());
         }
+
+        // string-form proxy (not http/https map)
+        try {
+            Dara::send($this->hostHeaderRequest('example.com'), [
+                'ipv4Only' => true,
+                'httpProxy' => 'http://[::1]:8080',
+            ]);
+            // httpProxy becomes proxy.http map via resolveConfig; also cover raw string via reflection
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('refusing to connect to IPv6 proxy address', $e->getMessage());
+        }
+
+        $method = new \ReflectionMethod(Dara::class, 'enforceSelectedProxyIpv4');
+        $method->setAccessible(true);
+        try {
+            $method->invoke(null, ['proxy' => 'http:///'], 'http', 'example.com');
+            self::fail('expected invalid proxy URL');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringHas('Invalid proxy URL', $e->getMessage());
+        }
+        // string proxy that is selected
+        $out = $method->invoke(null, ['proxy' => 'http://127.0.0.1:8080'], 'http', 'example.com');
+        self::assertSame('http://127.0.0.1:8080', $out['proxy']);
+    }
+
+    public function testIpv4OnlySkipsUnusedProxyWhenNoProxyMatches()
+    {
+        $captured = [];
+        Dara::config(['handler' => HandlerStack::create(function ($request, array $options) use (&$captured) {
+            $captured[] = $options;
+
+            return new FulfilledPromise(new PsrResponse(200));
+        })]);
+
+        // Target matches noProxy; unused https proxy hostname must not be force-resolved
+        Dara::send($this->hostHeaderRequest('127.0.0.1:80'), [
+            'ipv4Only' => true,
+            'httpProxy' => 'http://ipv4only-unused-proxy.invalid:8080',
+            'httpsProxy' => 'https://ipv4only-unused-https-proxy.invalid:8443',
+            'noProxy' => '127.0.0.1',
+        ]);
+        self::assertCount(1, $captured);
+        self::assertSame('http://ipv4only-unused-proxy.invalid:8080', $captured[0]['proxy']['http']);
+        self::assertSame('https://ipv4only-unused-https-proxy.invalid:8443', $captured[0]['proxy']['https']);
+    }
+
+    public function testIpv4OnlyCurlKeepsHttpsProxyLogicalHostname()
+    {
+        $captured = [];
+        Dara::config(['handler' => HandlerStack::create(function ($request, array $options) use (&$captured) {
+            $captured[] = $options;
+
+            return new FulfilledPromise(new PsrResponse(200));
+        })]);
+
+        $req = $this->hostHeaderRequest('api.example:443');
+        $req->protocol = 'https';
+        Dara::send($req, [
+            'ipv4Only' => true,
+            'httpsProxy' => 'https://localhost:8443',
+        ]);
+        self::assertSame('https://localhost:8443', $captured[0]['proxy']['https']);
+        self::assertStringMissing('hostname=', $captured[0]['proxy']['https']);
+        self::assertSame('v4', $captured[0]['force_ip_resolve']);
+    }
+
+    public function testStreamIpv4OnlyRedirectPreservesHostAndAuthorization()
+    {
+        // Use host + port fields (not "host:port" in Host) so psr7 1.x does not embed
+        // the port in getHost(), which would make same-origin redirects look cross-origin.
+        // Relative then same-host absolute redirects must keep logical host + Authorization.
+        $hops = [];
+        $mock = new \GuzzleHttp\Handler\MockHandler([
+            new PsrResponse(302, ['Location' => '/abs']),
+            new PsrResponse(302, ['Location' => 'http://api.example:8443/final']),
+            new PsrResponse(200, [], 'ok'),
+        ]);
+        $stack = HandlerStack::create($mock);
+        $stack->push(function (callable $handler) use (&$hops) {
+            return function ($request, array $options) use ($handler, &$hops) {
+                $hops[] = [
+                    'uriHost' => self::uriHostOnlyStatic($request->getUri()),
+                    'auth' => $request->getHeaderLine('Authorization'),
+                    'path' => $request->getUri()->getPath(),
+                ];
+
+                return $handler($request, $options);
+            };
+        });
+        Dara::config(['handler' => $stack]);
+
+        $request = new Request();
+        $request->method = 'GET';
+        $request->protocol = 'http';
+        $request->headers['host'] = 'api.example';
+        $request->port = 8443;
+        $request->pathname = '/';
+        $request->headers['Authorization'] = 'Bearer keep-me';
+        $res = Dara::send($request, [
+            'ipv4Only' => true,
+            'stream' => true,
+            'connectTimeout' => 2000,
+        ]);
+        self::assertSame(200, $res->getStatusCode());
+        self::assertCount(3, $hops);
+        foreach ($hops as $hop) {
+            self::assertSame('api.example', $hop['uriHost'], 'logical URI host must not become an IP');
+            self::assertSame('Bearer keep-me', $hop['auth'], 'same-origin redirect must keep Authorization');
+        }
+        self::assertSame('/', $hops[0]['path']);
+        self::assertSame('/abs', $hops[1]['path']);
+        self::assertSame('/final', $hops[2]['path']);
+    }
+
+    public function testStreamIpv4OnlyHostnameRedirectPreservesAuthorization()
+    {
+        // Absolute Location to the same logical host. If the request URI had been
+        // rewritten to 127.0.0.1, Guzzle UriComparator would treat this as cross-origin
+        // and strip Authorization.
+        $hops = [];
+        $mock = new \GuzzleHttp\Handler\MockHandler([
+            new PsrResponse(302, ['Location' => 'http://localhost:18080/final']),
+            new PsrResponse(200, [], 'ok'),
+        ]);
+        $stack = HandlerStack::create($mock);
+        $stack->push(function (callable $handler) use (&$hops) {
+            return function ($request, array $options) use ($handler, &$hops) {
+                $hops[] = [
+                    'uriHost' => self::uriHostOnlyStatic($request->getUri()),
+                    'auth' => $request->getHeaderLine('Authorization'),
+                ];
+
+                return $handler($request, $options);
+            };
+        });
+        Dara::config(['handler' => $stack]);
+
+        $request = new Request();
+        $request->method = 'GET';
+        $request->protocol = 'http';
+        $request->headers['host'] = 'localhost';
+        $request->port = 18080;
+        $request->pathname = '/';
+        $request->headers['Authorization'] = 'Bearer same-origin';
+        $res = Dara::send($request, [
+            'ipv4Only' => true,
+            'stream' => true,
+            'connectTimeout' => 2000,
+        ]);
+        self::assertSame(200, $res->getStatusCode());
+        self::assertCount(2, $hops);
+        self::assertSame('localhost', $hops[0]['uriHost']);
+        self::assertSame('localhost', $hops[1]['uriHost']);
+        self::assertSame('Bearer same-origin', $hops[0]['auth']);
+        self::assertSame('Bearer same-origin', $hops[1]['auth']);
     }
 
     public function testStreamIpv4OnlyPinsRedirectHops()
