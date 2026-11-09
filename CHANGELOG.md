@@ -4,7 +4,8 @@
 
 ### Fixed
 - Fixed PHP 8.4 and 8.5 deprecation warnings in date parsing and WebSocket connections. For WebSocket on these PHP versions, update to Pawl 0.4.3 or later and RFC6455 0.4.1 or later.
-- Preserved `React\Promise\Timer\TimeoutException` for WebSocket handshake timeouts after removing the `clue/block-react` dependency.
+- Documented the React Promise 3.x requirement for deprecation-free startup on PHP 8.5.
+- Preserved `React\Promise\Timer\TimeoutException` for WebSocket handshake timeouts after removing `clue/block-react`, and `TypeError` for invalid WebSocket connector arguments on PHP 7 and newer.
 
 ## [1.0.7] - 2026-11-03
 

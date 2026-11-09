@@ -87,18 +87,26 @@ class PromiseAwaiterTest extends TestCase
         $this->assertFalse($ran);
     }
 
-    public function testConnectorStillValidatesOptionalArguments()
+    public function testConnectorAcceptsOptionalArguments()
     {
         new WebSocketConnector();
         new WebSocketConnector(Factory::create());
-        foreach (array(array(new \stdClass(), null), array(null, new \stdClass())) as $args) {
-            try {
-                new WebSocketConnector($args[0], $args[1]);
-                $this->fail('Expected invalid argument');
-            } catch (\InvalidArgumentException $error) {
-                $this->assertNotEmpty($error->getMessage());
-            }
-        }
+        $this->assertInstanceOf(WebSocketConnector::class, new WebSocketConnector(null, null));
+    }
+
+    /** @dataProvider invalidConnectorArguments */
+    public function testConnectorPreservesArgumentErrorType($loop, $connector)
+    {
+        $this->expectException(PHP_VERSION_ID >= 70000 ? \TypeError::class : \InvalidArgumentException::class);
+        new WebSocketConnector($loop, $connector);
+    }
+
+    public static function invalidConnectorArguments()
+    {
+        return [
+            'invalid loop' => [new \stdClass(), null],
+            'invalid socket connector' => [null, new \stdClass()],
+        ];
     }
 
     public function testWrapsThrowableForExceptionBasedCallers()

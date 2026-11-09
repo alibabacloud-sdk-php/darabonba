@@ -20,11 +20,12 @@ class WebSocketConnector extends Connector
      */
     public function __construct($loop = null, $connector = null)
     {
+        $argumentError = PHP_VERSION_ID >= 70000 ? \TypeError::class : \InvalidArgumentException::class;
         if ($loop !== null && !$loop instanceof LoopInterface) {
-            throw new \InvalidArgumentException('loop must implement LoopInterface');
+            throw new $argumentError('loop must implement LoopInterface');
         }
         if ($connector !== null && !$connector instanceof ConnectorInterface) {
-            throw new \InvalidArgumentException('connector must implement ConnectorInterface');
+            throw new $argumentError('connector must implement ConnectorInterface');
         }
         $this->_loop = $loop ?: Loop::get();
 

@@ -23,6 +23,10 @@ upgrading to PHP 8.4 or newer, use `ratchet/pawl` 0.4.3+ and `ratchet/rfc6455`
 0.4.1+ to avoid implicit-nullability deprecations in the WebSocket dependencies.
 Update both packages in the application's Composer lock file with
 `composer update ratchet/pawl ratchet/rfc6455 --with-all-dependencies`.
+On PHP 8.5, also require React Promise 3.x with
+`composer require "react/promise:^3.0" --with-all-dependencies`.
+React Promise 2.x can emit a deprecation when Composer loads it, even in
+applications that only use HTTP.
 Older PHP versions retain the existing dependency matrix.
 
 The runtime no longer requires the abandoned `clue/block-react` package.
