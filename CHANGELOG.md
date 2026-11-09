@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## [Unreleased]
+## [1.0.8] - 2026-11-09
 
 ### Fixed
 - Fixed PHP 8.4 and 8.5 deprecation warnings in date parsing and WebSocket connections. For WebSocket on these PHP versions, update to Pawl 0.4.3 or later and RFC6455 0.4.1 or later.
