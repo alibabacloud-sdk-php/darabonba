@@ -87,7 +87,11 @@ jobs:
         if [ "$DEPS" = "modern" ]; then
           composer require --no-update --no-interaction \
             "ratchet/pawl:^0.4.3" \
+            "ratchet/rfc6455:^0.4.1" \
             "guzzlehttp/psr7:^2.0"
+          # The latest tagged test server still requires RFC6455 0.3.
+          composer require --dev --no-update --no-interaction \
+            "cboden/ratchet:0.4.x-dev#e621c6c40bf684bbbb877102416ad5303d05a9cc"
         elif [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
           # Composer ≥2.11 blocks all guzzlehttp/psr7 1.x via advisories; this
           # matrix intentionally covers the legacy rfc6455 0.3.0 + psr7 1.x line.
@@ -140,8 +144,8 @@ jobs:
               exit(1);
             }
           } elseif ($deps === "modern") {
-            if (version_compare($pawlNorm, "0.4.3", "<") || strpos($psr, "2.") !== 0) {
-              fwrite(STDERR, "expected Pawl >=0.4.3 and psr7 2.x\n");
+            if (version_compare($pawlNorm, "0.4.3", "<") || version_compare($rfcNorm, "0.4.1", "<") || strpos($psr, "2.") !== 0) {
+              fwrite(STDERR, "expected Pawl >=0.4.3, RFC6455 >=0.4.1 and psr7 2.x\n");
               exit(1);
             }
           } elseif ($rfcNorm !== "0.3.1" || strpos($psr, "2.") !== 0) {
@@ -150,7 +154,7 @@ jobs:
           }
         '
 
-    - name: Check runtime loading without deprecations
+    - name: Check runtime and WebSocket handshake without deprecations
       if: matrix.deps == 'modern'
       run: php -d error_reporting=-1 tests/check-runtime-loading.php
 

@@ -4,6 +4,7 @@ namespace AlibabaCloud\Dara\Internal;
 
 use React\EventLoop\LoopInterface;
 use React\Promise\PromiseInterface;
+use React\Promise\Timer\TimeoutException;
 
 /**
  * Waits for a WebSocket handshake on its own loop, without changing the global
@@ -40,13 +41,13 @@ final class PromiseAwaiter
         );
 
         if (!$settled && $timeout !== null) {
-            $timer = $loop->addTimer(max(0, $timeout), function () use (&$settled, &$rejected, &$reason, $promise, $loop) {
+            $timer = $loop->addTimer(max(0, $timeout), function () use (&$settled, &$rejected, &$reason, $promise, $loop, $timeout) {
                 if (!$settled) {
                     // Set the outcome before cancellation, which may reject the
                     // original promise synchronously with a different exception.
                     $settled = true;
                     $rejected = true;
-                    $reason = new \RuntimeException('WebSocket handshake timed out');
+                    $reason = new TimeoutException($timeout, 'Timed out after ' . $timeout . ' seconds');
                     $loop->stop();
                     if (method_exists($promise, 'cancel')) {
                         $promise->cancel();

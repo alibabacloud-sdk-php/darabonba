@@ -2,6 +2,7 @@
 
 namespace AlibabaCloud\Dara;
 
+use AlibabaCloud\Dara\Internal\WebSocketClientNegotiator;
 use Ratchet\Client\Connector;
 use Ratchet\RFC6455\Handshake\ClientNegotiator;
 use React\EventLoop\Loop;
@@ -34,6 +35,10 @@ class WebSocketConnector extends Connector
         }
 
         $this->_connector = $connector;
-        $this->_negotiator = new ClientNegotiator();
+        // Keep the legacy negotiator on RFC6455 0.3 for older PHP releases.
+        $constructor = new \ReflectionMethod(ClientNegotiator::class, '__construct');
+        $this->_negotiator = $constructor->getNumberOfRequiredParameters() === 0
+            ? new ClientNegotiator()
+            : new WebSocketClientNegotiator();
     }
 }

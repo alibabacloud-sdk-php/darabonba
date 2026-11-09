@@ -7,6 +7,7 @@ use AlibabaCloud\Dara\WebSocketConnector;
 use PHPUnit\Framework\TestCase;
 use React\EventLoop\Factory;
 use React\Promise\Deferred;
+use React\Promise\Timer\TimeoutException;
 
 class PromiseAwaiterTest extends TestCase
 {
@@ -61,8 +62,8 @@ class PromiseAwaiterTest extends TestCase
         try {
             PromiseAwaiter::await($deferred->promise(), Factory::create(), 0.001);
             $this->fail('Expected handshake timeout');
-        } catch (\RuntimeException $error) {
-            $this->assertSame('WebSocket handshake timed out', $error->getMessage());
+        } catch (TimeoutException $error) {
+            $this->assertSame(0.001, $error->getTimeout());
         }
         $this->assertTrue($cancelled);
         // A late completion cannot replace the timeout or restart its loop.

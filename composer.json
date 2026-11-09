@@ -34,9 +34,10 @@
         "alibabacloud/tea": "^3.2",
         "guzzlehttp/guzzle": "^6.3|^7.0",
         "ratchet/pawl": "^0.4",
-        "ratchet/rfc6455": "^0.3.0",
+        "ratchet/rfc6455": "^0.3.0|^0.4.1",
         "react/event-loop": "^1.2",
-        "react/promise": "^2.8|^3.0"
+        "react/promise": "^2.8|^3.0",
+        "react/promise-timer": "^1.11"
     },
     "require-dev": {
         "cboden/ratchet": "^0.4",

@@ -12,6 +12,7 @@ use AlibabaCloud\Dara\WebSocketUtil;
 use Exception;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
+use React\Promise\Timer\TimeoutException;
 
 class MockWebSocketHandler extends AbstractWebSocketHandler
 {
@@ -216,6 +217,25 @@ class WebSocketTest extends TestCase
         $this->expectException(\Exception::class);
         $client->connect($request, $runtimeObject);
         self::assertFalse($handler->connectedCalled);
+    }
+
+    public function testHandshakeDeadlinePreservesTimeoutException()
+    {
+        // TCP can connect, but this listener never responds to the upgrade request.
+        $listener = stream_socket_server('tcp://127.0.0.1:0');
+        self::assertNotFalse($listener);
+        try {
+            $client = WebSocketUtil::newDefaultWebSocketClient(new MockWebSocketHandler());
+            $request = new Request();
+            $request->protocol = 'ws';
+            $request->pathname = '/';
+            $request->headers = ['host' => stream_socket_get_name($listener, false)];
+
+            $this->expectException(TimeoutException::class);
+            $client->connect($request, ['connectTimeout' => 100, 'webSocketHandshakeTimeout' => 100]);
+        } finally {
+            fclose($listener);
+        }
     }
 
     public function testDefaultWebSocketClientHandlerErrorOnConnect()
