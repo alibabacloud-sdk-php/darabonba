@@ -89,6 +89,11 @@ jobs:
             "ratchet/pawl:^0.4.3" \
             "guzzlehttp/psr7:^2.0"
         elif [ "$DEPS" = "rfc6455-0.3.0-psr7-1" ]; then
+          # Composer ≥2.11 blocks all guzzlehttp/psr7 1.x via advisories; this
+          # matrix intentionally covers the legacy rfc6455 0.3.0 + psr7 1.x line.
+          composer config policy.advisories.block false 2>/dev/null \
+            || composer config audit.block-insecure false 2>/dev/null \
+            || true
           composer require --no-update --no-interaction \
             "ratchet/rfc6455:0.3.0" \
             "guzzlehttp/psr7:^1.7"

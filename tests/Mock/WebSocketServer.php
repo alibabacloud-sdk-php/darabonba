@@ -36,10 +36,12 @@ class EchoWebSocketServer implements MessageComponentInterface
 }
 
 $port = isset($argv[1]) ? (int) $argv[1] : 18080;
+$address = isset($argv[2]) ? $argv[2] : '0.0.0.0';
 $server = Ratchet\Server\IoServer::factory(
     new Ratchet\Http\HttpServer(
         new Ratchet\WebSocket\WsServer(new EchoWebSocketServer())
     ),
-    $port
+    $port,
+    $address
 );
 $server->run();
