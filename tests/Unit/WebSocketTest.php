@@ -58,36 +58,35 @@ class ErrorOnConnectHandler extends MockWebSocketHandler
  */
 class WebSocketTest extends TestCase
 {
-    /** @var int */
-    private $pid = 0;
+    /** @var resource|null */
+    private $serverProcess;
+
+    /** @var resource|null */
+    private $serverOutput;
 
     /** @var int */
-    private $port = 18080;
+    private $port;
 
     /**
      * @before
      */
     protected function startMockServer()
     {
-        // Avoid `: void` / random_int() so PHP 5.6 / 7.0 CI matrix stays compatible.
-        $this->port = 18080 + mt_rand(1, 1000);
         $server = dirname(__DIR__) . '/Mock/WebSocketServer.php';
-        $command = sprintf('php %s %d > /dev/null 2>&1 & echo $!', escapeshellarg($server), $this->port);
-        $output = shell_exec($command);
-        $this->pid = (int) trim($output);
-        $ready = false;
-        for ($i = 0; $i < 50; ++$i) {
-            $fp = @fsockopen('127.0.0.1', $this->port, $errno, $errstr, 0.2);
-            if ($fp) {
-                fclose($fp);
-                $ready = true;
-                break;
-            }
-            usleep(100000);
+        $php = PHP_SAPI === 'cli' ? PHP_BINARY : 'php';
+        $command = sprintf('exec %s %s 0 127.0.0.1', escapeshellarg($php), escapeshellarg($server));
+        $this->serverProcess = proc_open($command, [1 => ['pipe', 'w'], 2 => STDERR], $pipes);
+        if (!is_resource($this->serverProcess)) {
+            throw new Exception('Could not launch the WebSocket mock server');
         }
-        if (!$ready) {
-            throw new Exception('WebSocket mock server failed to start on port ' . $this->port);
+        $this->serverOutput = $pipes[1];
+        stream_set_timeout($this->serverOutput, 5);
+        $port = (int) fgets($this->serverOutput);
+        if ($port < 1 || $port > 65535) {
+            $this->stopMockServer();
+            throw new Exception('WebSocket mock server did not report a listening port');
         }
+        $this->port = $port;
     }
 
     /**
@@ -95,9 +94,12 @@ class WebSocketTest extends TestCase
      */
     protected function stopMockServer()
     {
-        if ($this->pid > 0) {
-            shell_exec('kill ' . $this->pid);
-            $this->pid = 0;
+        if (is_resource($this->serverProcess)) {
+            proc_terminate($this->serverProcess);
+            fclose($this->serverOutput);
+            proc_close($this->serverProcess);
+            $this->serverProcess = null;
+            $this->serverOutput = null;
         }
     }
 

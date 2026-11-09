@@ -44,4 +44,8 @@ $server = Ratchet\Server\IoServer::factory(
     $port,
     $address
 );
+if ($port === 0) {
+    fwrite(STDOUT, parse_url($server->socket->getAddress(), PHP_URL_PORT) . "\n");
+    fflush(STDOUT);
+}
 $server->run();
