@@ -13,7 +13,7 @@ class Date
 
     public function __construct($date = 'now') {
         $pattern = '/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)(?: \+?(\d{4}))?/';
-        if (ctype_digit($date) || is_numeric($date)) {
+        if (is_numeric($date)) {
             $this->date = (new DateTime())->setTimestamp($date);
         } elseif (preg_match($pattern, $date, $matches)) {
             $timeStr = $matches[1];

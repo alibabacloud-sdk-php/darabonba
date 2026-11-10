@@ -504,7 +504,9 @@ class CoverageBoostTest extends TestCase
         $ref = new \ReflectionClass($stream);
         // force detached state for error branches
         $prop = $ref->getProperty('stream');
-        $prop->setAccessible(true);
+        if (PHP_VERSION_ID < 80100) {
+            $prop->setAccessible(true);
+        }
         $resource = $prop->getValue($stream);
         if (is_resource($resource)) {
             fclose($resource);
@@ -582,7 +584,9 @@ class CoverageBoostTest extends TestCase
         foreach (['path', 'pathname', 'protocol', 'hostname', 'host', 'port', 'hash', 'search', 'auth'] as $name) {
             if ($ref->hasProperty($name)) {
                 $p = $ref->getProperty($name);
-                $p->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) {
+                    $p->setAccessible(true);
+                }
                 $p->setValue($url, 'x');
             }
         }

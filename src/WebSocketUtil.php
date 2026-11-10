@@ -2,7 +2,6 @@
 
 namespace AlibabaCloud\Dara;
 
-use Clue\React\Block;
 use Exception;
 use InvalidArgumentException;
 use Ratchet\Client\Connector;

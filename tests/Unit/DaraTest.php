@@ -8,6 +8,9 @@ use AlibabaCloud\Dara\Models\RuntimeOptions;
 use AlibabaCloud\Dara\Models\ExtendsParameters;
 use AlibabaCloud\Dara\Request;
 use AlibabaCloud\Dara\Dara;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\Response as PsrResponse;
 use PHPUnit\Framework\TestCase;
 use AlibabaCloud\Dara\Model;
 
@@ -118,18 +121,22 @@ class DaraTest extends TestCase
 
     public static function testRequest()
     {
-        ini_set('xdebug.max_nesting_level', 100);
-        $count = 102;
-        while ($count > 0) {
-            $request                  = new Request();
-            $request->method          = 'GET';
-            $request->protocol        = 'https';
-            $request->headers['host'] = 'alibabacloud.com';
-            $request->pathname        = '/posts/1';
-            $request->port            = 443;
-            $response = Dara::send($request);
-            self::assertEquals(200, $response->getStatusCode());
-            --$count;
+        $mock = new MockHandler(array_fill(0, 102, new PsrResponse(200)));
+        Dara::config(['handler' => HandlerStack::create($mock)]);
+        try {
+            for ($i = 0; $i < 102; ++$i) {
+                $request                  = new Request();
+                $request->method          = 'GET';
+                $request->protocol        = 'https';
+                $request->headers['host'] = 'example.com';
+                $request->pathname        = '/posts/1';
+                $request->port            = 443;
+                $response = Dara::send($request);
+                self::assertEquals(200, $response->getStatusCode());
+            }
+            self::assertSame('https://example.com/posts/1', (string) $mock->getLastRequest()->getUri());
+        } finally {
+            Dara::config([]);
         }
     }
 

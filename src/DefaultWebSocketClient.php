@@ -2,7 +2,7 @@
 
 namespace AlibabaCloud\Dara;
 
-use Clue\React\Block;
+use AlibabaCloud\Dara\Internal\PromiseAwaiter;
 use Exception;
 use InvalidArgumentException;
 use Ratchet\Client\WebSocket;
@@ -136,7 +136,7 @@ class DefaultWebSocketClient implements WebSocketClientInterface
         try {
             $timeoutSeconds = max($connectTimeout, $handshakeTimeout) / 1000;
             /** @var WebSocket $conn */
-            $conn = Block\await($connector($requestURL, [], $headers), $this->loop, $timeoutSeconds);
+            $conn = PromiseAwaiter::await($connector($requestURL, [], $headers), $this->loop, $timeoutSeconds);
             $this->conn = $conn;
             $this->state = self::STATE_CONNECTED;
             $this->setupConnectionHandlers($conn);
