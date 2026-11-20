@@ -26,88 +26,64 @@ class Url
     private $auth = '';
     
     public function __construct($str) {
+        if (!is_string($str)) {
+            throw new Exception\DaraException(['code' => 'InvalidURL', 'message' => 'URL must be a string']);
+        }
+        $parts = parse_url($str);
+        if ($parts === false) {
+            throw new Exception\DaraException(['code' => 'InvalidURL', 'message' => 'URL cannot be parsed']);
+        }
         $this->url = $str;
+        $this->protocol = isset($parts['scheme']) ? strtolower($parts['scheme']) : '';
+        $this->hostname = isset($parts['host']) ? $parts['host'] : '';
+        $this->port = isset($parts['port']) ? (string)$parts['port'] : '';
+        $this->host = $this->hostname . ($this->port !== '' ? ':' . $this->port : '');
+        $this->pathname = isset($parts['path']) ? $parts['path'] : '';
+        $this->search = isset($parts['query']) ? '?' . $parts['query'] : '';
+        $this->hash = isset($parts['fragment']) ? '#' . $parts['fragment'] : '';
+        if (isset($parts['user']) || isset($parts['pass'])) {
+            $this->auth = (isset($parts['user']) ? $parts['user'] : '') . ':' . (isset($parts['pass']) ? $parts['pass'] : '');
+        }
+        $this->path = $this->pathname . $this->search;
     }
     
     public function path() {
-        if(empty($this->path)) {
-            return ;
-        }
-        $pathname = $this->pathname();
-        $query     = $this->search();
-        $this->path = $pathname . '?' . $query;
         return $this->path;
     }
     
     public function pathname() {
-        if(empty($this->pathname)) {
-            return $this->pathname;
-        }
-        $this->pathname = parse_url($ref, PHP_URL_PATH);
         return $this->pathname;
     }
     
     public function protocol() {
-        if(empty($this->protocol)) {
-            return $this->protocol;
-        }
-        $this->protocol = parse_url($ref, PHP_URL_SCHEME);
         return $this->protocol;
     }
     
     public function hostname() {
-        if(empty($this->hostname)) {
-            return $this->hostname;
-        }
-        $this->hostname = parse_url($ref, PHP_URL_HOST);
         return $this->hostname;
     }
     
     public function host() {
-        if(empty($this->host)) {
-            return ;
-        }
-        $hostname = $this->hostname();
-        $port     = $this->port();
-        $this->host = $hostname . $port;
         return $this->host;
     }
     
     public function port() {
-        if(empty($this->port)) {
-            return $this->port;
-        }
-        $this->port = parse_url($ref, PHP_URL_PORT);
         return $this->port;
     }
     
     public function hash() {
-        if(empty($this->hash)) {
-            return $this->hash;
-        }
-        $this->hash = parse_url($ref, PHP_URL_FRAGMENT);
         return $this->hash;
     }
     
     public function search() {
-        if(empty($this->search)) {
-            return $this->search;
-        }
-        $this->search = parse_url($ref, PHP_URL_QUERY);
         return $this->search;
     }
     
     public function href() {
-        return $this->href;
+        return $this->url;
     }
     
     public function auth() {
-        if(empty($this->auth)) {
-            return $this->auth;
-        }
-        $username = parse_url($ref, PHP_URL_USER);
-        $password = parse_url($ref, PHP_URL_PASS);
-        $this->auth = $username . ':' . $password;
         return $this->auth;
     }
     

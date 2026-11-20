@@ -100,15 +100,20 @@ class CoverageBoostTest extends TestCase
     {
         $url = Url::parse('https://user:pass@example.com:8443/path?q=1#frag');
         $this->assertInstanceOf(Url::class, $url);
-        $this->assertNull($url->path());
-        $this->assertSame('', $url->pathname());
-        $this->assertSame('', $url->protocol());
-        $this->assertSame('', $url->hostname());
-        $this->assertNull($url->host());
-        $this->assertSame('', $url->port());
-        $this->assertSame('', $url->hash());
-        $this->assertSame('', $url->search());
-        $this->assertSame('', $url->auth());
+        // parse 现在确实解析地址；同时保留空地址 accessor 的独立回归。
+        $this->assertSame('/path?q=1', $url->path());
+        $this->assertSame('/path', $url->pathname());
+        $this->assertSame('https', $url->protocol());
+        $this->assertSame('example.com', $url->hostname());
+        $this->assertSame('example.com:8443', $url->host());
+        $this->assertSame('8443', $url->port());
+        $this->assertSame('#frag', $url->hash());
+        $this->assertSame('?q=1', $url->search());
+        $this->assertSame('user:pass', $url->auth());
+        $empty = Url::parse('');
+        foreach (['path', 'pathname', 'protocol', 'hostname', 'host', 'port', 'hash', 'search', 'auth'] as $accessor) {
+            $this->assertSame('', $empty->$accessor());
+        }
         $this->assertNull(Url::percentEncode(null));
     }
 

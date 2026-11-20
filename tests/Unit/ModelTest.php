@@ -11,6 +11,19 @@ use PHPUnit\Framework\TestCase;
  */
 class ModelTest extends TestCase
 {
+    public function testOssPrivateUrlRoundTrip()
+    {
+        $class = \AlibabaCloud\Dara\Models\RuntimeOptions::class;
+        self::assertArrayNotHasKey('ossPrivateUrl', (new $class())->toMap());
+        foreach (['', 'http://localhost:8080/prefix', 'https://oss.example.test'] as $endpoint) {
+            $model = new $class(['ossPrivateUrl' => $endpoint]);
+            self::assertSame($endpoint, $model->ossPrivateUrl);
+            self::assertSame($endpoint, $model->toMap()['ossPrivateUrl']);
+            self::assertSame($endpoint, $class::fromMap($model->toMap())->ossPrivateUrl);
+            self::assertSame($endpoint, Model::toModel(['ossPrivateUrl' => $endpoint], new $class())->ossPrivateUrl);
+        }
+    }
+
     public function testToMap()
     {
         $model = new ModelMock();
