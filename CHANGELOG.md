@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [1.0.9] - 2026-11-24
+
+### Added
+- 新增可选 `RuntimeOptions.ossPrivateUrl`，支持 OSS PrivateLink 上传地址及模型序列化往返。
+
+### Fixed
+- 补齐 URL authority 校验，保留 PHP 8.0 之前的空 query/fragment 分隔符。
+- 代理回归改用连接错误码断言，并验证 HTTP/HTTPS/noProxy 参数传递。
+
 ## [1.0.8] - 2026-11-09
 
 ### Fixed
